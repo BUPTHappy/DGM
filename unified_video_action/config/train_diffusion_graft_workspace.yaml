@@ -40,6 +40,10 @@ training:
   # Stage 2 specific settings
   steps: 50000  # Reduced training steps for fine-tuning
   data_fraction: 0.10  # Use only 10% of data for fine-tuning
+  # Multi-GPU settings
+  num_gpus: 4  # Number of GPUs to use
+  batch_size_per_gpu: 32  # Batch size per GPU
+  gradient_accumulation_steps: 1  # Gradient accumulation across GPUs
   
 checkpoint:
   save_last_ckpt: true

@@ -1,33 +1,40 @@
-#!/usr/bin/env python3
-"""
-Stage 1: Cache teacher activations for distillation training
-缓存教师模型的激活用于蒸馏训练
-"""
 
 import argparse
 import os
+import sys
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import numpy as np
 from tqdm import tqdm
 import pickle
 from pathlib import Path
 
+# Add the project root to Python path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
+
 # Import your existing modules
-from unified_video_action.dataset import get_dataset
-from unified_video_action.model.autoregressive.mar_con_unified import MAR
-from unified_video_action.model.autoregressive.diffusion_action_loss import DiffActLoss
-from unified_video_action.model.autoregressive.diffusion_loss import SimpleMLPAdaLN
-from unified_video_action.model.autoregressive.cross_attention_diffusion import CrossAttentionAdaLN
+try:
+    from unified_video_action.dataset import get_dataset
+    from unified_video_action.model.autoregressive.mar_con_unified import MAR
+    from unified_video_action.model.autoregressive.diffusion_action_loss import DiffActLoss
+    from unified_video_action.model.autoregressive.diffusion_loss import SimpleMLPAdaLN
+    from unified_video_action.model.autoregressive.cross_attention_diffusion import CrossAttentionAdaLN
+    from unified_video_action.utils.data_utils import resize_image
+except ImportError as e:
+    print(f"Import error: {e}")
+    raise
 
 
 class TeacherActivationCache:
-    """缓存教师模型的激活"""
     
-    def __init__(self, model, device='cuda'):
+    def __init__(self, model, device='cuda', dataset_path=None, vae_model=None):
         self.model = model
         self.device = device
+        self.dataset_path = dataset_path
+        self.vae_model = vae_model
         self.model.eval()
         
         # Hook to capture activations
@@ -42,12 +49,25 @@ class TeacherActivationCache:
                 self.activations[name] = output.detach().cpu()
             return hook
         
+        print("Registering hooks...")
+        
+        # Debug: Check model structure
+        print(f"Model has diffactloss: {hasattr(self.model, 'diffactloss')}")
+        if hasattr(self.model, 'diffactloss'):
+            print(f"diffactloss has net: {hasattr(self.model.diffactloss, 'net')}")
+            if hasattr(self.model.diffactloss, 'net'):
+                net = self.model.diffactloss.net
+                print(f"Net type: {type(net)}")
+                print(f"Is SimpleMLPAdaLN: {isinstance(net, SimpleMLPAdaLN)}")
+                print(f"Is CrossAttentionAdaLN: {isinstance(net, CrossAttentionAdaLN)}")
+        
         # Hook the diffusion action head components
         if hasattr(self.model, 'diffactloss') and hasattr(self.model.diffactloss, 'net'):
             net = self.model.diffactloss.net
             
             # Hook SimpleMLPAdaLN components
             if isinstance(net, SimpleMLPAdaLN):
+                print("Hooking SimpleMLPAdaLN components...")
                 # Hook input projection
                 self.hooks.append(net.input_proj.register_forward_hook(get_activation('input_proj')))
                 
@@ -58,8 +78,8 @@ class TeacherActivationCache:
                 # Hook final layer
                 self.hooks.append(net.final_layer.register_forward_hook(get_activation('final_layer')))
                 
-            # Hook CrossAttentionAdaLN components (if used)
             elif isinstance(net, CrossAttentionAdaLN):
+                print("Hooking CrossAttentionAdaLN components...")
                 # Hook input projection
                 self.hooks.append(net.input_proj.register_forward_hook(get_activation('input_proj')))
                 
@@ -72,6 +92,17 @@ class TeacherActivationCache:
                 
                 # Hook final layer
                 self.hooks.append(net.final_layer.register_forward_hook(get_activation('final_layer')))
+            else:
+                print(f"Unknown net type: {type(net)}")
+        else:
+            print("No diffactloss.net found, trying alternative hook locations...")
+            # Try hooking other components
+            if hasattr(self.model, 'diffactloss'):
+                print("Model has diffactloss but no net attribute")
+            else:
+                print("Model has no diffactloss attribute")
+        
+        print(f"Registered {len(self.hooks)} hooks")
     
     def remove_hooks(self):
         """移除钩子函数"""
@@ -91,37 +122,189 @@ class TeacherActivationCache:
                 # Clear activations before each batch
                 self.activations.clear()
                 
-                # Move batch to device
-                for key in batch:
-                    if isinstance(batch[key], torch.Tensor):
-                        batch[key] = batch[key].to(self.device)
+                # Move batch to device - handle nested structures
+                def move_to_device(obj, device):
+                    if isinstance(obj, torch.Tensor):
+                        return obj.to(device)
+                    elif isinstance(obj, dict):
+                        return {k: move_to_device(v, device) for k, v in obj.items()}
+                    elif isinstance(obj, (list, tuple)):
+                        return type(obj)(move_to_device(item, device) for item in obj)
+                    else:
+                        return obj
+                
+                batch = move_to_device(batch, self.device)
                 
                 # Forward pass
                 try:
                     # Try different forward call patterns
                     if hasattr(self.model, 'forward'):
-                        result = self.model(
-                            imgs=batch['image'],
-                            cond=batch['cond'],
-                            nactions=batch['action'],
-                            task_mode="policy_model"
-                        )
+                        # Handle different data formats
+                        if 'image' in batch:
+                            # Direct image format
+                            imgs = batch['image']
+                        elif 'obs' in batch and 'image' in batch['obs']:
+                            # Nested obs format
+                            imgs = batch['obs']['image']
+                        elif 'obs' in batch and 'agentview_rgb' in batch['obs']:
+                            # Libero dataset uses agentview_rgb
+                            imgs = batch['obs']['agentview_rgb']
+                        else:
+                            raise KeyError("Could not find image data in batch")
+                        
+                        # Use the original library's resize_image function for consistency
+                        print(f"Original batch keys: {batch.keys()}")
+                        if 'obs' in batch:
+                            print(f"Obs keys: {batch['obs'].keys()}")
+                        
+                        # Create a minimal config object for resize_image function
+                        class SimpleConfig:
+                            class Task:
+                                def __init__(self, name):
+                                    self.name = name
+                            def __init__(self, task_name):
+                                self.task = self.Task(task_name)
+                        
+                        # Determine task name from dataset path
+                        if 'libero' in str(self.dataset_path).lower():
+                            cfg = SimpleConfig('libero')
+                        elif 'pusht' in str(self.dataset_path).lower():
+                            cfg = SimpleConfig('pusht')
+                        elif 'umi' in str(self.dataset_path).lower():
+                            cfg = SimpleConfig('umi')
+                        else:
+                            cfg = SimpleConfig('other')
+                        
+                        # Apply the original library's resize function
+                        print(f"Using task config: {cfg.task.name}")
+                        batch = resize_image(cfg, batch)
+                        
+                        # Now get the processed image
+                        imgs = batch['obs']['image']
+                        print(f"After resize_image - imgs.shape: {imgs.shape}")
+                        
+                        # Ensure we have 4 frames for the model
+                        if len(imgs.shape) == 5:  # [B, T, C, H, W] format
+                            batch_size, time_dim = imgs.shape[0], imgs.shape[1]
+                            
+                            # Ensure we have 4 frames
+                            if time_dim != 4:
+                                if time_dim == 1:
+                                    # Repeat single frame 4 times
+                                    imgs = imgs.repeat(1, 4, 1, 1, 1)
+                                    print(f"Repeated single frame to 4 frames - imgs.shape: {imgs.shape}")
+                                else:
+                                    # Take first 4 frames or pad with last frame
+                                    if time_dim > 4:
+                                        imgs = imgs[:, :4, :, :, :]
+                                    else:
+                                        # Pad with last frame
+                                        last_frame = imgs[:, -1:, :, :, :]
+                                        padding_frames = last_frame.repeat(1, 4 - time_dim, 1, 1, 1)
+                                        imgs = torch.cat([imgs, padding_frames], dim=1)
+                                    print(f"Adjusted to 4 frames - imgs.shape: {imgs.shape}")
+                                    
+                            batch['obs']['image'] = imgs
+                        
+                        elif len(imgs.shape) == 4:  # [B, C, H, W] format
+                            # Add time dimension by repeating the image
+                            imgs = imgs.unsqueeze(1).repeat(1, 4, 1, 1, 1)  # Repeat 4 times for 4 frames
+                            print(f"Added time dimension - imgs.shape: {imgs.shape}")
+                            batch['obs']['image'] = imgs
+                        
+                        else:
+                            raise ValueError(f"Unexpected image shape: {imgs.shape}")
+                    
+                        print("Performing VAE encoding first...")
+                        
+                        # Prepare inputs for VAE encoding
+                        imgs = batch['obs']['image']  # [B, T, C, H, W]
+                        cond = imgs  # Use same images for condition
+                        
+                        # Handle action data
+                        if 'action' in batch:
+                            actions = batch['action']
+                            print(f"Found action data: {actions.shape}")
+                            
+                            # Handle different action data formats
+                            if len(actions.shape) == 3:  # [B, T, A] format
+                                # Take the last action or average across time
+                                if actions.shape[1] > 1:
+                                    actions = actions[:, -1, :]  # Take last action
+                                else:
+                                    actions = actions.squeeze(1)  # Remove time dimension
+                            elif len(actions.shape) == 2:  # [B, A] format
+                                pass  # Already correct
+                            else:
+                                raise ValueError(f"Unexpected action shape: {actions.shape}")
+                            
+                            print(f"Reshaped action data: {actions.shape}")
+                        else:
+                            # Create dummy actions if not available
+                            actions = torch.zeros(imgs.shape[0], 2, device=imgs.device)
+                            print("Created dummy actions")
+                        
+                        # Perform VAE encoding first
+                        try:
+                            with torch.no_grad():
+                                # Import the VAE encoding function
+                                from unified_video_action.utils.data_utils import extract_latent_autoregressive
+                                
+                                # VAE encode the images
+                                # Convert from [B, T, C, H, W] to [B, C, T, H, W] for VAE
+                                imgs_for_vae = imgs.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
+                                cond_for_vae = cond.permute(0, 2, 1, 3, 4)  # [B, C, T, H, W]
+                                
+                                # Use the VAE model passed to the cache
+                                if self.vae_model is None:
+                                    print("VAE model not available")
+                                    raise NotImplementedError("VAE model not available")
+                                
+                                # Encode images to latents
+                                z, latent_size = extract_latent_autoregressive(self.vae_model, imgs_for_vae)
+                                c, _ = extract_latent_autoregressive(self.vae_model, cond_for_vae)
+                                
+                                print(f"VAE encoded - z.shape: {z.shape}, c.shape: {c.shape}")
+                                
+                                # Now call model with VAE-encoded latents
+                                # extract_latent_autoregressive already returns [B, T, C, H, W] format
+                                # No permutation needed - the model expects this exact format
+                                
+                                print(f"Final model inputs - z.shape: {z.shape}, c.shape: {c.shape}")
+                                
+                                # Debug: Check what happens in patchify
+                                print(f"Before patchify - z: {z.shape}, c: {c.shape}")
+                                output = self.model(z, c, nactions=actions, task_mode='policy_model')
+                                print("Model forward successful!")
+                                
+                        except Exception as e:
+                            print(f"VAE encoding or model forward failed: {e}")
+                            continue
+                        
+                        # Model forward was successful, now capture activations
+                        print("Model forward completed successfully!")
                         
                         # Handle different return formats
-                        if isinstance(result, tuple):
-                            if len(result) == 3:
-                                loss, video_loss, act_loss = result
-                            elif len(result) == 2:
-                                loss, video_loss = result
-                                act_loss = torch.tensor(0.0)
+                        print(f"Model output type: {type(output)}, length: {len(output) if isinstance(output, tuple) else 'N/A'}")
+                        if isinstance(output, tuple):
+                            if len(output) == 3:
+                                loss, video_loss, act_loss = output
+                                print(f"Got 3 outputs: loss={loss}, video_loss={video_loss}, act_loss={act_loss}")
+                            elif len(output) == 2:
+                                # For policy_model, the model returns (loss, act_loss) where loss = act_loss
+                                loss, act_loss = output
+                                video_loss = torch.tensor(0.0)
+                                print(f"Got 2 outputs: loss={loss}, act_loss={act_loss}")
                             else:
-                                loss = result[0]
+                                loss = output[0]
                                 video_loss = torch.tensor(0.0)
                                 act_loss = torch.tensor(0.0)
+                                print(f"Got {len(output)} outputs, using first as loss")
                         else:
-                            loss = result
+                            loss = output
                             video_loss = torch.tensor(0.0)
                             act_loss = torch.tensor(0.0)
+                            print(f"Got single output: loss={loss}")
                     else:
                         raise AttributeError("Model has no forward method")
                     
@@ -130,9 +313,9 @@ class TeacherActivationCache:
                         batch_data = {
                             'batch_idx': batch_idx,
                             'activations': self.activations.copy(),
-                            'input_shape': batch['image'].shape,
-                            'cond_shape': batch['cond'].shape,
-                            'action_shape': batch['action'].shape,
+                            'input_shape': imgs.shape,
+                            'cond_shape': batch.get('cond', torch.zeros_like(imgs[:, :1])).shape,
+                            'action_shape': actions.shape,
                         }
                         
                         cached_data.append(batch_data)
@@ -162,8 +345,21 @@ def main():
                        help='Batch size for caching (default: 32)')
     parser.add_argument('--device', type=str, default='cuda',
                        help='Device to use (default: cuda)')
+    parser.add_argument('--num_gpus', type=int, default=1,
+                       help='Number of GPUs to use for parallel processing (default: 1)')
+    parser.add_argument('--gpu_ids', type=str, default=None,
+                       help='Specific GPU IDs to use (e.g., "0,1,2,3"). If not specified, uses first num_gpus GPUs')
     
     args = parser.parse_args()
+    
+    # Setup GPU configuration
+    if args.gpu_ids:
+        gpu_ids = [int(x.strip()) for x in args.gpu_ids.split(',')]
+        args.num_gpus = len(gpu_ids)
+    else:
+        gpu_ids = list(range(args.num_gpus))
+    
+    print(f"Using {args.num_gpus} GPUs: {gpu_ids}")
     
     # Create output directory
     os.makedirs(args.out, exist_ok=True)
@@ -180,12 +376,41 @@ def main():
             print(f"Found model config in checkpoint key: {key}")
             break
     
+    print("FORCING use of fixed model config for Libero dataset compatibility")
+    model_config = None  # Force use of our fixed config below
+    
     if model_config is None:
         print("Warning: No model config found in checkpoint, using defaults")
         model_config = {
+            'task_name': 'libero',
+            'different_history_freq': False,
+            'use_history_action': False,
+            'action_mask_ratio': 0.5,
+            'use_proprioception': False,
+            'predict_wrist_img': False,
+            'predict_proprioception': False,
+            'img_size': 256,  # VAE model requires 256x256 input
+            'vae_stride': 16,
+            'patch_size': 1,
             'encoder_embed_dim': 1024,
             'decoder_embed_dim': 1024,
             'predict_action': True,
+            'language_emb_model': None,
+            'shape_meta': {
+                'action': {
+                    'shape': [7]  # Libero action dimension
+                },
+                'obs': {
+                    'agentview_rgb': {
+                        'shape': [3, 128, 128],  # Original Libero image size
+                        'type': 'rgb'
+                    },
+                    'ee_pos': {
+                        'shape': [3],
+                        'type': 'low_dim'
+                    }
+                }
+            },
             'action_model_params': {
                 'predict_action': True,
                 'act_model_type': 'conv_fc',  # Use original MLP head
@@ -195,14 +420,41 @@ def main():
     
     # Create model with safe parameter handling
     try:
+        print(f"Creating model with config: img_size={model_config['img_size']}")
         model = MAR(**model_config)
     except Exception as e:
         print(f"Error creating model with config: {e}")
         print("Falling back to default config...")
         model_config = {
+            'task_name': 'libero',
+            'different_history_freq': False,
+            'use_history_action': False,
+            'action_mask_ratio': 0.5,
+            'use_proprioception': False,
+            'predict_wrist_img': False,
+            'predict_proprioception': False,
+            'img_size': 256,  # VAE model requires 256x256 input
+            'vae_stride': 16,
+            'patch_size': 1,
             'encoder_embed_dim': 1024,
             'decoder_embed_dim': 1024,
             'predict_action': True,
+            'language_emb_model': None,
+            'shape_meta': {
+                'action': {
+                    'shape': [7]  # Libero action dimension
+                },
+                'obs': {
+                    'agentview_rgb': {
+                        'shape': [3, 128, 128],  # Original Libero image size
+                        'type': 'rgb'
+                    },
+                    'ee_pos': {
+                        'shape': [3],
+                        'type': 'low_dim'
+                    }
+                }
+            },
             'action_model_params': {
                 'predict_action': True,
                 'act_model_type': 'conv_fc',
@@ -230,11 +482,49 @@ def main():
         if len(unexpected_keys) <= 10:  # Only print if not too many
             print(f"Unexpected keys: {unexpected_keys}")
     
-    model = model.to(args.device)
+    # Setup model for multi-GPU if needed
+    if args.num_gpus > 1:
+        print(f"Setting up model for {args.num_gpus} GPUs")
+        model = torch.nn.DataParallel(model, device_ids=gpu_ids)
+        primary_device = f'cuda:{gpu_ids[0]}'
+    else:
+        primary_device = args.device
+    
+    model = model.to(primary_device)
     model.eval()
     
+    # Load VAE model
+    print("Loading VAE model...")
+    from unified_video_action.vae.vaekl import AutoencoderKL
+    
+    # VAE model parameters (matching the pretrained checkpoint)
+    vae_model_params = {
+        'autoencoder_path': 'pretrained_models/vae/kl16.ckpt',
+        'ddconfig': type('obj', (object,), {
+            'vae_embed_dim': 16,  # Must match the pretrained checkpoint
+            'ch_mult': (1, 1, 2, 2, 4),
+            'num_res_blocks': 2,
+            'attn_resolutions': (16,),
+            'dropout': 0.0,
+            'resamp_with_conv': True,
+            'in_channels': 3,
+            'resolution': 256,
+            'z_channels': 16,  # Must match the pretrained checkpoint
+            'double_z': True,
+        })(),
+        'use_variational': True,
+    }
+    
+    with torch.no_grad():
+        vae_model = AutoencoderKL(**vae_model_params)
+    vae_model.eval()
+    for param in vae_model.parameters():
+        param.requires_grad = False
+    vae_model = vae_model.to(primary_device)
+    print("VAE model loaded successfully")
+    
     # Create activation cache
-    cache = TeacherActivationCache(model, args.device)
+    cache = TeacherActivationCache(model, primary_device, args.dataset, vae_model)
     cache.register_hooks()
     
     # Load dataset with proper error handling
@@ -337,14 +627,12 @@ def main():
         print(f"Error during caching: {e}")
         raise
     finally:
-        # Always clean up resources
         try:
             cache.remove_hooks()
             print("Hooks removed successfully")
         except Exception as e:
             print(f"Warning: Error removing hooks: {e}")
-        
-        # Clear GPU memory
+
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             print("GPU memory cleared")

@@ -954,7 +954,7 @@ class MAR(nn.Module):
 
         elif task_mode == "policy_model" or task_mode == "inverse_model":
             act_loss = self.diffactloss(
-                z=z, target=nactions, task_mode=task_mode, text_latents=text_latents
+                target=nactions, z=z, task_mode=task_mode, text_latents=text_latents
             )
             video_loss = torch.tensor(0.0).to(self.device)
             loss = act_loss
@@ -973,7 +973,7 @@ class MAR(nn.Module):
                     z=z, target=target, mask=mask, text_latents=text_latents
                 )
             act_loss = self.diffactloss(
-                z=z, target=nactions, task_mode=task_mode, text_latents=text_latents
+                target=nactions, z=z, task_mode=task_mode, text_latents=text_latents
             )
             loss = video_loss + act_loss
 

@@ -6,6 +6,7 @@ Stage 1: Distill individual operators (cross-attention, self-attention, MLP)
 
 import argparse
 import os
+import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,9 +16,19 @@ from tqdm import tqdm
 import pickle
 from pathlib import Path
 
+# Add the project root to Python path
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
+
 # Import your existing modules
-from unified_video_action.model.autoregressive.cross_attention_diffusion import CrossAttentionAdaLN, CrossAttentionBlock
-from unified_video_action.model.autoregressive.diffusion_loss import SimpleMLPAdaLN
+try:
+    from unified_video_action.model.autoregressive.cross_attention_diffusion import CrossAttentionAdaLN, CrossAttentionBlock
+    from unified_video_action.model.autoregressive.diffusion_loss import SimpleMLPAdaLN
+except ImportError as e:
+    print(f"Import error: {e}")
+    print(f"Project root: {project_root}")
+    print(f"Python path: {sys.path}")
+    raise
 
 
 class OperatorDistiller:
@@ -238,8 +249,21 @@ def main():
                        help='Batch size')
     parser.add_argument('--device', type=str, default='cuda',
                        help='Device to use')
+    parser.add_argument('--num_gpus', type=int, default=1,
+                       help='Number of GPUs to use for parallel processing (default: 1)')
+    parser.add_argument('--gpu_ids', type=str, default=None,
+                       help='Specific GPU IDs to use (e.g., "0,1,2,3"). If not specified, uses first num_gpus GPUs')
     
     args = parser.parse_args()
+    
+    # Setup GPU configuration
+    if args.gpu_ids:
+        gpu_ids = [int(x.strip()) for x in args.gpu_ids.split(',')]
+        args.num_gpus = len(gpu_ids)
+    else:
+        gpu_ids = list(range(args.num_gpus))
+    
+    print(f"Using {args.num_gpus} GPUs: {gpu_ids}")
     
     # Load cached activations with proper error handling
     cached_file = os.path.join(args.cached_dir, 'teacher_activations.pkl')
@@ -285,6 +309,15 @@ def main():
         num_heads=num_heads
     )
     
+    # Setup student for multi-GPU if needed
+    if args.num_gpus > 1:
+        print(f"Setting up student operator for {args.num_gpus} GPUs")
+        student = torch.nn.DataParallel(student, device_ids=gpu_ids)
+        primary_device = f'cuda:{gpu_ids[0]}'
+    else:
+        primary_device = args.device
+    
+    student = student.to(primary_device)
     print(f"Created student operator: {student}")
     
     # Train student with proper error handling
@@ -294,10 +327,13 @@ def main():
             student, inputs, targets,
             epochs=args.epochs,
             lr=args.lr,
-            batch_size=args.batch_size
+            batch_size=args.batch_size * args.num_gpus  # Scale batch size with number of GPUs
         )
         
-        # Save trained weights
+        # Save trained weights (unwrap DataParallel if used)
+        if args.num_gpus > 1:
+            trained_student = trained_student.module
+        
         os.makedirs(os.path.dirname(args.out), exist_ok=True)
         torch.save(trained_student.state_dict(), args.out)
         
