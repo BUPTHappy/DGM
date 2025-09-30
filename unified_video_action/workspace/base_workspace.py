@@ -79,6 +79,110 @@ class BaseWorkspace:
     def get_checkpoint_path(self, tag="latest"):
         return pathlib.Path(self.output_dir).joinpath("checkpoints", f"{tag}.ckpt")
 
+    def load_payload_new(self, payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, **kwargs):
+        if exclude_keys is None:
+            exclude_keys = tuple()
+        if include_keys is None:
+            include_keys = payload["pickles"].keys()
+
+        if (
+            "lr_scheduler" not in self.__dict__
+            and "lr_scheduler" in payload["state_dicts"]
+        ):
+            del payload["state_dicts"]["lr_scheduler"]
+
+        for key, value in payload["state_dicts"].items():
+            if key not in exclude_keys:
+                value_new = {}
+                for k, v in value.items():
+                    if "module" in k:
+                        value_new[k.replace("module.", "")] = value[k]
+                    else:
+                        value_new[k] = value[k]
+                try:
+                    if key == "optimizer": #and "base_optimizer_state" in value_new:
+                        # value_new = value_new["base_optimizer_state"]
+                        continue  # HACK: optimizer state is not compatible with multi-node training. Should use accelerate.load_state
+                    if diffhead_finetuning:
+                        drop_prefixes = ("model.diffloss", "model.diffactloss")
+                        # drop_prefixes = ("model.diffactloss")
+                        buff = {}
+                        for k, v in value_new.items():
+                            if k.startswith(drop_prefixes):
+                                print(f"Dropped {k}")
+                            else:
+                                buff[k] = v
+                        value_new = buff
+
+                    
+                    drop_prefixes = ("model.diffactloss.ucgmts")
+                    # drop_prefixes = ("model.diffactloss")
+                    buff = {}
+                    for k, v in value_new.items():
+                        if k.startswith(drop_prefixes):
+                            print(f"Dropped {k}")
+                        else:
+                            buff[k] = v
+                    value_new = buff
+                    print(f"Loading {key}")
+                    load_result = self.__dict__[key].load_state_dict(value_new, **kwargs)
+                except Exception as e:
+                    #print(f"{key=}, {value_new.keys()=}, {value_new=}, {kwargs=}")
+                    raise e
+
+        if "model" not in payload["state_dicts"]:
+            print("loading checkpoint, use ema model for model")
+            value = payload["state_dicts"]["ema_model"]
+            value_new = {}
+            for k, v in value.items():
+                if "module" in k:
+                    value_new[k.replace("module.", "")] = value[k]
+                else:
+                    value_new[k] = value[k]
+            
+            if diffhead_finetuning:
+                drop_prefixes = ("model.diffloss.net", "model.diffactloss.net", "model.diffactloss.ucgmts")
+                #drop_prefixes = ("model.diffactloss")
+                buff = {}
+                dropped_set = set()
+                for k, v in value_new.items():
+                    if k.startswith(drop_prefixes):
+                        dropped_set.add(k.split(".")[2])
+                    else:
+                        buff[k] = v
+                value_new = buff
+                if dropped_set:
+                    print(f"Dropped {dropped_set} from ema model")
+
+            drop_prefixes = ("model.diffactloss.ucgmts")
+            # drop_prefixes = ("model.diffactloss")
+            buff = {}
+            dropped_set = set()
+            for k, v in value_new.items():
+                if k.startswith(drop_prefixes):
+                    dropped_set.add(k.split(".")[2])
+                else:
+                    buff[k] = v
+            if dropped_set:
+                print(f"Dropped {dropped_set} from ema model")
+            value_new = buff
+            load_result = self.__dict__["model"].load_state_dict(value_new, **kwargs)
+            print(f"FOR KEY {key}")
+            missing_keys = set([
+                ".".join(k.split(".")[:3]) for k in load_result.missing_keys
+            ])
+            
+            unexpected_keys = set([
+                ".".join(k.split(".")[:3]) for k in load_result.unexpected_keys
+            ])
+
+            print("Missing keys:", missing_keys)
+            print("Unexpected keys:", unexpected_keys)
+
+        for key in include_keys:
+            if key in payload["pickles"]:
+                self.__dict__[key] = dill.loads(payload["pickles"][key])
+
     def load_payload(self, payload, exclude_keys=None, include_keys=None, **kwargs):
         if exclude_keys is None:
             exclude_keys = tuple()
@@ -105,7 +209,8 @@ class BaseWorkspace:
                         continue  # HACK: optimizer state is not compatible with multi-node training. Should use accelerate.load_state
                     self.__dict__[key].load_state_dict(value_new, **kwargs)
                 except Exception as e:
-                    print(f"{key=}, {value_new.keys()=}, {value_new=}, {kwargs=}")
+                    #print(f"{key=}, {value_new.keys()=}, {value_new=}, {kwargs=}")
+                    print(f"Error loading {key} with keys {value_new.keys()}")
                     raise e
 
         if "model" not in payload["state_dicts"]:
@@ -123,6 +228,7 @@ class BaseWorkspace:
             if key in payload["pickles"]:
                 self.__dict__[key] = dill.loads(payload["pickles"][key])
 
+
     def load_checkpoint(
         self, path=None, tag="latest", exclude_keys=None, include_keys=None, **kwargs
     ):
@@ -131,7 +237,7 @@ class BaseWorkspace:
         else:
             path = pathlib.Path(path)
         payload = torch.load(path.open("rb"), pickle_module=dill, **kwargs)
-        self.load_payload(payload, exclude_keys=exclude_keys, include_keys=include_keys)
+        self.load_payload_new(payload, exclude_keys=exclude_keys, include_keys=include_keys)
         return payload
 
     @classmethod

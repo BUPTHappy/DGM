@@ -3,7 +3,7 @@ name: uva
 defaults:
   - _self_
   - task: libero10
-  - model: uva
+  - model: fast_policy_dit_hybrid
 
 dataloader:
   batch_size: 32
@@ -36,7 +36,8 @@ training:
   tqdm_interval_sec: 1.0
   use_ema: true
   val_every: 1
-  mixed_precision: 'fp16'
+  mixed_precision: 'fp16' # fp16
+  profile: false
   
 checkpoint:
   save_last_ckpt: true
@@ -61,14 +62,18 @@ logging:
   mode: online
   name: train_uva_libero10
   project: unified_video_action
-  resume: true
+  resume: false
   tags:
   - train_uva_libero10
   - libero10
   - default
 
+payload: checkpoints/libero10.ckpt
+
+freeze_submodules: true
+
 multi_run:
   run_dir: data/outputs/train_uva_libero10
   wandb_name_base: train_uva_libero10
 
-save_folder: ""
+save_folder : profiling/ucgm_dit_vs_mlp/dit.txt

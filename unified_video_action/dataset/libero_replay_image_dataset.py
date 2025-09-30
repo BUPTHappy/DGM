@@ -312,8 +312,6 @@ def _convert_robomimic_to_replay(
 
     if language_emb_model == "clip":
         tokenizer = AutoTokenizer.from_pretrained("openai/clip-vit-base-patch32")
-    elif language_emb_model is None:
-        tokenizer = None
     else:
         raise NotImplementedError(f"Language model {language_emb_model} not implemented")
 
@@ -357,10 +355,6 @@ def _convert_robomimic_to_replay(
         language_attention_mask = [
             item.attention_mask.unsqueeze(1) for item in language_all_tokens
         ]
-    elif language_emb_model is None:
-        # No language model, create dummy tokens
-        language_input_ids = [None] * len(language_all)
-        language_attention_mask = [None] * len(language_all)
     else:
         raise NotImplementedError(f"Language model {language_emb_model} not implemented")
 
@@ -400,9 +394,8 @@ def _convert_robomimic_to_replay(
                     this_language_data.append(
                         language_tokens.repeat(this_data[-1].shape[0], 1, 1)
                     )
-                elif language_emb_model is None:
-                    # No language model, skip language data
-                    pass
+                else:
+                    raise NotImplementedError(f"Language model {language_emb_model} not implemented")
 
         this_data = np.concatenate(this_data, axis=0)
 
@@ -415,18 +408,11 @@ def _convert_robomimic_to_replay(
 
             assert this_data.shape == (n_steps,) + tuple(shape_meta["action"]["shape"])
 
-            if this_language_data:
-                this_language_data = np.concatenate(this_language_data, axis=0)
-                if language_emb_model == "clip":
-                    assert this_language_data.shape == (n_steps,) + tuple([2, seq_max_len])
-                elif language_emb_model is None:
-                    # No language data expected
-                    pass
-                else:
-                    raise NotImplementedError(f"Language model {language_emb_model} not implemented")
+            this_language_data = np.concatenate(this_language_data, axis=0)
+            if language_emb_model == "clip":
+                assert this_language_data.shape == (n_steps,) + tuple([2, seq_max_len])
             else:
-                # No language data for None model
-                this_language_data = None
+                raise NotImplementedError(f"Language model {language_emb_model} not implemented")
         else:
             assert this_data.shape == (n_steps,) + tuple(
                 shape_meta["obs"][key]["shape"]
@@ -440,7 +426,7 @@ def _convert_robomimic_to_replay(
             dtype=this_data.dtype,
         )
 
-        if key == "action" and this_language_data is not None:
+        if key == "action":
             _ = data_group.array(
                 name="language",
                 data=this_language_data,

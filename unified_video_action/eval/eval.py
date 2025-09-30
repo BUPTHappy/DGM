@@ -25,6 +25,7 @@ from unified_video_action.utils.data_utils import (
     decode_from_sample_autoregressive,
 )
 from unified_video_action.utils.language_model import extract_text_features
+import json
 
 
 
@@ -159,7 +160,6 @@ def test_video_fvd(
             ) = prepare_data_predict_action(
                 cfg, x, actions, model, T, device, language_goal=language_goal
             )
-
             z, act_out = model.model.sample_tokens(
                 bsz=k,
                 cond=c,

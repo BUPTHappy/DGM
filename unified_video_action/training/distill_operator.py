@@ -1,9 +1,3 @@
-#!/usr/bin/env python3
-"""
-Stage 1: Distill individual operators (cross-attention, self-attention, MLP)
-蒸馏单个算子（交叉注意力、自注意力、MLP）
-"""
-
 import argparse
 import os
 import sys
@@ -39,8 +33,6 @@ class OperatorDistiller:
         self.device = device
         
     def create_student_operator(self, teacher_activations, model_channels=1024, num_heads=8):
-        """根据教师激活创建学生算子"""
-        
         if 'cross_attn' in self.target_layer:
             # Create cross-attention student
             student = CrossAttentionBlock(
@@ -318,8 +310,6 @@ def main():
         primary_device = args.device
     
     student = student.to(primary_device)
-    print(f"Created student operator: {student}")
-    
     # Train student with proper error handling
     print(f"Training student operator for {args.epochs} epochs...")
     try:

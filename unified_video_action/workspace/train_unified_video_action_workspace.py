@@ -9,12 +9,14 @@ if __name__ == "__main__":
 
 import os
 import hydra
+import math
 import torch
 from omegaconf import OmegaConf
 import pathlib
 import copy
 import random
 import tqdm
+from torch.profiler import profile, record_function, ProfilerActivity
 from torch.utils.data import DataLoader
 import numpy as np
 from accelerate import Accelerator
@@ -72,13 +74,71 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
             self.ema_model = copy.deepcopy(self.model)
 
         # configure training state
+        self.optimizer_parameters = cfg.model.policy.optimizer
         self.optimizer = self.model.get_optimizer(**cfg.model.policy.optimizer)
 
         # configure training state
         self.global_step = 0
         self.epoch = 0
-        
-        
+    
+    def freeze_submodules(self, action_only=False):
+        # freeze submodules except the action diffusion head
+        # Let's say you want to train only model.classifier
+        if self.cfg.training.use_ema:
+            models = [self.model, self.ema_model]
+        else:
+            models = [self.model]
+
+        for model in models:
+            # Freeze everything
+            model.model.eval()
+            for param in model.model.parameters():
+                param.requires_grad = False
+            
+            print(f"Model type: {type(model.model)}")
+            # Unfreeze only diffloss and diffactloss
+            if not action_only:
+                if hasattr(model.model, "diffloss"):
+                    model.model.diffloss.train()
+                    for param in model.model.diffloss.parameters():
+                        param.requires_grad = True
+                    print("Unfreezing diffloss")
+            if hasattr(model.model, "diffactloss"):
+                model.model.diffactloss.train()
+                for param in model.model.diffactloss.parameters():
+                    param.requires_grad = True
+                print("Unfreezing diffactloss")
+            
+    def test_rollout(self):
+        """
+        Minimal rollout: build dataset -> get/set normalizer -> env rollout.
+        No accelerator, no wandb, no training bits.
+        """
+        import copy
+        import hydra
+
+        cfg = copy.deepcopy(self.cfg)
+
+        dataset = hydra.utils.instantiate(cfg.task.dataset)
+        normalizer = dataset.get_normalizer()
+
+
+        policy = getattr(self, "ema_model", None) or self.model
+        policy = getattr(policy, "module", policy)
+        policy.set_normalizer(normalizer)
+        policy.to("cuda" if torch.cuda.is_available() else "cpu")
+        policy.eval()
+
+        accelerator = Accelerator(
+                log_with="wandb", mixed_precision=self.cfg.training.mixed_precision
+        )
+        if accelerator.is_main_process:
+            env_runners = load_env_runner(cfg, self.output_dir)
+            with torch.no_grad():
+                runner_log = env_rollout(cfg, env_runners, policy)
+
+            print(runner_log)
+
     def run(self):
         cfg = copy.deepcopy(self.cfg)
         if (
@@ -184,7 +244,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
         if cfg.training.resume:
             lastest_ckpt_path = self.get_checkpoint_path()
             if lastest_ckpt_path.is_file():
-                accelerator.print(f"Resuming from checkpoint {lastest_ckpt_path}")
+                accelerator.print(f"Resuming from checkpoint {lastest_ckpt_path}") 
                 self.load_checkpoint(path=lastest_ckpt_path)
 
         # configure ema
@@ -195,7 +255,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
         # configure env
         if (
             cfg.model.policy.action_model_params.predict_action
-            and "env_runner" in cfg.task
+            and "env_runner" in cfg.task and accelerator.is_main_process and cfg.training.max_train_steps is None
         ):
             env_runners = load_env_runner(cfg, self.output_dir)
 
@@ -234,11 +294,17 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
             cfg.training.sample_every = 1
 
         # training loop
+        #print(f"self.model.normalizer.params_dict.action.scale {self.model.normalizer.params_dict.action.scale}")
+        #print(f"self.ema_model.normalizer.params_dict.action.scale {self.ema_model.normalizer.params_dict.action.scale}")
+        total_params       = sum(p.numel() for p in self.model.parameters())
+        trainable_params   = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        trainable_percent  = 100.0 * trainable_params / total_params
+
+        print(f"Trainable parameters: {trainable_params:,} / {total_params:,} "
+            f"({trainable_percent:.2f}%)")
+
         for local_epoch_idx in range(cfg.training.num_epochs):
             step_log = dict()
-            print(self.output_dir)
-
-            # ========= train for this epoch ==========
             train_losses = list()
             with tqdm.tqdm(
                 train_dataloader,
@@ -261,9 +327,11 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                             raw_loss, (loss_diffusion, loss_action) = self.model(batch)
                     else:
                         raw_loss, (loss_diffusion, loss_action) = self.model(batch)
-
+                    
+                    # backward pass
                     accelerator.backward(raw_loss)
-
+                        
+                    scale = accelerator.scaler.get_scale()
                     # step optimizer
                     if self.global_step % cfg.training.gradient_accumulate_every == 0:
                         self.optimizer.step()
@@ -291,6 +359,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         loss_action_cpu = 0.0
 
                     step_log = {
+                        "AMP scale": scale,
                         "train_loss": raw_loss_cpu,
                         "diffusion_loss": loss_diffusion_cpu,
                         "action_loss": loss_action_cpu,
@@ -309,84 +378,74 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     ):
                         break
 
+
             train_loss = np.mean(train_losses)
             step_log["train_loss"] = train_loss
 
             # ========= eval for this epoch ==========
-            # policy = self.model
             policy = accelerator.unwrap_model(self.model)
             if cfg.training.use_ema:
                 policy = self.ema_model
             policy.eval()
 
-            # ========= evaluate val video generation =========
-            if cfg.model.policy.autoregressive_model_params.predict_video:
-                fvd_log = test_video_fvd(
-                    cfg,
-                    policy,
-                    val_dataloader,
-                    local_epoch_idx,
-                    self.output_dir,
-                    device,
-                )
-                step_log.update(fvd_log)
+            if cfg.training.max_train_steps is None:
+                # ========= evaluate val action error =========
+                if (
+                    cfg.model.policy.action_model_params.predict_action
+                    and "env_runner" not in cfg.task
+                ):
+                    ## if has similartor, skip this
+                    act_log = test_action_l2(
+                        cfg,
+                        policy,
+                        val_dataloader,
+                        local_epoch_idx,
+                        self.output_dir,
+                        device,
+                    )
+                    step_log.update(act_log)
 
-            # ========= evaluate val action error =========
-            if (
-                cfg.model.policy.action_model_params.predict_action
-                and "env_runner" not in cfg.task
-            ):
-                ## if has similartor, skip this
-                act_log = test_action_l2(
-                    cfg,
-                    policy,
-                    val_dataloader,
-                    local_epoch_idx,
-                    self.output_dir,
-                    device,
-                )
-                step_log.update(act_log)
+                # ========= simulator: run rollout =========            
+                if (
+                    cfg.model.policy.action_model_params.predict_action
+                    and "env_runner" in cfg.task and accelerator.is_main_process
+                ):
+                    if (self.epoch % cfg.training.rollout_every) == 0:
+                        runner_log = env_rollout(cfg, env_runners, policy)
+                        step_log.update(runner_log)
 
-            # ========= simulator: run rollout =========
-            if (
-                cfg.model.policy.action_model_params.predict_action
-                and "env_runner" in cfg.task
-            ):
-                if (self.epoch % cfg.training.rollout_every) == 0:
-                    runner_log = env_rollout(cfg, env_runners, policy)
-                    step_log.update(runner_log)
+                # ========= checkpoint ==========
+                if (
+                    self.epoch % cfg.training.checkpoint_every
+                ) == 0 and accelerator.is_main_process:
+                    # unwrap the model to save ckpt
+                    model_ddp = self.model
+                    self.model = accelerator.unwrap_model(self.model)
 
-            # ========= checkpoint =========
-            if (
-                self.epoch % cfg.training.checkpoint_every
-            ) == 0 and accelerator.is_main_process:
-                # unwrap the model to save ckpt
-                model_ddp = self.model
-                self.model = accelerator.unwrap_model(self.model)
+                    # checkpointing
+                    if cfg.checkpoint.save_last_ckpt:
+                        self.save_checkpoint()
 
-                # checkpointing
-                if cfg.checkpoint.save_last_ckpt:
-                    self.save_checkpoint()
+                    if cfg.checkpoint.save_last_snapshot:
+                        self.save_snapshot()
 
-                if cfg.checkpoint.save_last_snapshot:
-                    self.save_snapshot()
+                    # sanitize metric names
+                    metric_dict = dict()
+                    for key, value in step_log.items():
+                        new_key = key.replace("/", "_")
+                        metric_dict[new_key] = value
 
-                # sanitize metric names
-                metric_dict = dict()
-                for key, value in step_log.items():
-                    new_key = key.replace("/", "_")
-                    metric_dict[new_key] = value
+                    # save topk checkpoints
+                    topk_ckpt_path = topk_manager.get_ckpt_path(metric_dict)
+                    if topk_ckpt_path is not None:
+                        self.save_checkpoint(path=topk_ckpt_path)
 
-                # save topk checkpoints
-                topk_ckpt_path = topk_manager.get_ckpt_path(metric_dict)
-                if topk_ckpt_path is not None:
-                    self.save_checkpoint(path=topk_ckpt_path)
-
-                # recover the DDP model
-                self.model = model_ddp
-
+                    # recover the DDP model
+                    self.model = model_ddp
+            accelerator.wait_for_everyone()
             # ========= eval end for this epoch ==========
-            policy.train()
+            policy.model.diffactloss.train()
+            # policy.train()
             accelerator.log(step_log, step=self.global_step)
             self.global_step += 1
             self.epoch += 1

@@ -1,106 +1,23 @@
 from functools import partial
 
 import numpy as np
+#import difftopk
 from tqdm import tqdm
-import scipy.stats as stats #用于生成随机掩码比例
+import scipy.stats as stats
 import math
-from einops import rearrange #用于张量维度重排
+from einops import rearrange
 import torch
 import torch.nn as nn
-from torch.utils.checkpoint import checkpoint #用于节省显存的梯度检查点技术
-
+from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
+from unified_video_action.model import tome
 from timm.models.vision_transformer import Block
 from unified_video_action.model.autoregressive.diffusion_loss import DiffLoss
+from unified_video_action.model.autoregressive.diffusion_loss_ucgm import DiffLossUCGM
 from unified_video_action.model.autoregressive.diffusion_action_loss import DiffActLoss
+from unified_video_action.model.autoregressive.diffusion_action_loss_ucgm import DiffActLossUCGM
 
-# from unified_video_action.model.autoregressive.local_causal_attention import LocalCausalAttentionBlock
 
-class LocalCausalTransformerBlock(nn.Module):
-    """Transformer block with local causal attention window mechanism"""
-    
-    def __init__(self, dim, num_heads, mlp_ratio=4.0, qkv_bias=True, norm_layer=nn.LayerNorm, 
-                 proj_drop=0.0, attn_drop=0.0, window_size=3):
-        super().__init__()
-        self.norm1 = norm_layer(dim)
-        self.attn = LocalCausalAttention(dim, num_heads=num_heads, qkv_bias=qkv_bias, 
-                                       attn_drop=attn_drop, proj_drop=proj_drop, window_size=window_size)
-        self.norm2 = norm_layer(dim)
-        mlp_hidden_dim = int(dim * mlp_ratio)
-        self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim, act_layer=nn.GELU, drop=proj_drop)
-
-    def forward(self, x):
-        x = x + self.attn(self.norm1(x))
-        x = x + self.mlp(self.norm2(x))
-        return x
-
-class LocalCausalAttention(nn.Module):
-    """Multi-head attention with local causal window mechanism"""
-    
-    def __init__(self, dim, num_heads=8, qkv_bias=False, attn_drop=0., proj_drop=0., window_size=3):
-        super().__init__()
-        self.num_heads = num_heads
-        head_dim = dim // num_heads
-        self.scale = head_dim ** -0.5
-        self.window_size = window_size
-
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
-        self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
-        self.proj_drop = nn.Dropout(proj_drop)
-
-    def create_local_causal_mask(self, seq_len):
-        """Create local causal mask with window size"""
-        mask = torch.zeros(seq_len, seq_len)
-        
-        for i in range(seq_len):
-            # Each position can only attend to current and previous window_size-1 positions
-            start_idx = max(0, i - self.window_size + 1)
-            mask[i, start_idx:i+1] = 1
-            
-        return mask == 0  # True for positions that should be masked
-
-    def forward(self, x):
-        B, N, C = x.shape
-        
-        # Generate Q, K, V
-        qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
-
-        # Scale attention
-        attn = (q @ k.transpose(-2, -1)) * self.scale
-        
-        # Apply local causal mask
-        local_causal_mask = self.create_local_causal_mask(N).to(x.device)
-        attn = attn.masked_fill(local_causal_mask, float('-inf'))
-        
-        attn = attn.softmax(dim=-1)
-        attn = self.attn_drop(attn)
-
-        x = (attn @ v).transpose(1, 2).reshape(B, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x)
-        return x
-
-class Mlp(nn.Module):
-    """MLP as used in Vision Transformer, MLP-Mixer and related networks"""
-    def __init__(self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.):
-        super().__init__()
-        out_features = out_features or in_features
-        hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
-        self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
-        self.drop = nn.Dropout(drop)
-
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.drop(x)
-        x = self.fc2(x)
-        x = self.drop(x)
-        return x
-
-#根据预设的顺序创建掩码
 def mask_by_order(mask_len, order, bsz, seq_len, device):
     masking = torch.zeros(bsz, seq_len).to(device)
     masking = torch.scatter(
@@ -143,56 +60,61 @@ class MAR(nn.Module):
         predict_video=True,
         act_diff_training_steps=1000,
         act_diff_testing_steps="100",
+        token_pruning=False,
+        pruning_ratios=None,
+        restore_after_encoder=False,
         action_model_params={},
-        **kwargs
+        use_ucgm=False,
+        ucgmts_config={},
+        **kwargs,
     ):
         super().__init__()
 
-        self.task_name = kwargs["task_name"] # 任务名称
+        self.task_name = kwargs["task_name"]
         self.different_history_freq = kwargs["different_history_freq"]
         self.use_history_action = kwargs["use_history_action"]
-        self.action_mask_ratio = kwargs["action_mask_ratio"] # 动作掩码比例
-        self.use_proprioception = kwargs["use_proprioception"] # 是否使用感知
-        self.predict_wrist_img = kwargs["predict_wrist_img"] # 是否预测手腕图像
-        self.predict_proprioception = kwargs["predict_proprioception"] # 是否预测感知
-        self.n_frames = 4 # 固定处理4帧视频
+        self.action_mask_ratio = kwargs["action_mask_ratio"]
+        self.use_proprioception = kwargs["use_proprioception"]
+        self.predict_wrist_img = kwargs["predict_wrist_img"]
+        self.predict_proprioception = kwargs["predict_proprioception"]
+        self.n_frames = 4
+        self.use_ucgm = use_ucgm
 
         # ========= VAE and patchify specifics =========
-            # 输入图像 256x256 → VAE编码后 16x16 → 每个位置是一个token
-            # 总共有 16×16=256 个空间位置的token
-            # 4帧视频 × 256个空间token = 1024个时空token
-        
-        self.img_size = img_size # 图像大小 256x256
-        self.vae_stride = vae_stride # VAE下采样倍数 16
-        self.patch_size = patch_size # 补丁大小
-        self.seq_h = self.seq_w = img_size // vae_stride // patch_size # 16x16=256个空间位置
-        self.seq_len = self.seq_h * self.seq_w # 256个空间位置
-        self.token_embed_dim = vae_embed_dim * patch_size**2  
+        self.img_size = img_size
+        self.vae_stride = vae_stride
+        self.patch_size = patch_size
+        self.seq_h = self.seq_w = img_size // vae_stride // patch_size
+        self.seq_len = self.seq_h * self.seq_w
+        self.token_embed_dim = vae_embed_dim * patch_size**2
         self.vae_embed_dim = vae_embed_dim
         self.grad_checkpointing = grad_checkpointing
         self.label_drop_prob = label_drop_prob
-        
+        self.token_pruning = token_pruning
+        self.pruning_ratios = pruning_ratios
+        self.restore_after_encoder = restore_after_encoder
+
+        print("Token pruning:", token_pruning)
         # ========= Masked MAE =========
         # variant masking ratio, a left-half truncated Gaussian centered at 100% masking ratio with std 0.25
-            # 掩码比例生成器，左半截断高斯分布，中心在100%，标准差为0.25： 大部分时候会掩盖70%-100%的token
         self.mask_ratio_generator = stats.truncnorm(
             (mask_ratio_min - 1.0) / 0.25, 0, loc=1.0, scale=0.25
         )
 
         # ========= Projection =========
-        # conditional frames 条件帧投影（历史观察帧）
+        # conditional frames
         self.z_proj_cond = nn.Linear(self.token_embed_dim, encoder_embed_dim, bias=True)
 
-        # video frames 目标帧投影（要预测的视频帧）
+        # video frames
         self.z_proj = nn.Linear(self.token_embed_dim, encoder_embed_dim, bias=True)
 
-        # wrist video frames 手腕相机投影（如果预测手腕图像）
+        # wrist video frames
         if self.predict_wrist_img:
             self.z_proj_wrist = nn.Linear(
                 self.token_embed_dim, encoder_embed_dim, bias=True
             )
 
-        # action 动作
+        # action
         self.predict_action = action_model_params["predict_action"]
         act_dim = kwargs["shape_meta"]["action"]["shape"][0]
 
@@ -200,7 +122,6 @@ class MAR(nn.Module):
         self.buffer_size_action = 64
 
         # ========= Fake Latent =========
-         
         self.fake_latent_x = nn.Parameter(torch.zeros(1, encoder_embed_dim))
         self.fake_action_latent = nn.Parameter(torch.zeros(1, encoder_embed_dim))
         if self.predict_wrist_img:
@@ -290,8 +211,9 @@ class MAR(nn.Module):
         # ========= Normalization =========
         self.z_proj_ln = nn.LayerNorm(encoder_embed_dim, eps=1e-6)
 
+        # ======== Token Pruning =========
+
         # ========= Encoder Blocks =========
-        # Original transformer blocks
         self.encoder_blocks = nn.ModuleList(
             [
                 Block(
@@ -306,32 +228,8 @@ class MAR(nn.Module):
                 for _ in range(encoder_depth)
             ]
         )
+        
         self.encoder_norm = norm_layer(encoder_embed_dim)
-
-        # ========= Local Causal Encoder Blocks (copy of original with window mechanism) =========
-        self.local_causal_encoder_blocks = nn.ModuleList(
-            [
-                LocalCausalTransformerBlock(
-                    encoder_embed_dim,
-                    encoder_num_heads,
-                    mlp_ratio,
-                    qkv_bias=True,
-                    norm_layer=norm_layer,
-                    proj_drop=proj_dropout,
-                    attn_drop=attn_dropout,
-                    window_size=15,  # 增加窗口大小，从3改为8，提供更大的感受野
-                )
-                for _ in range(encoder_depth)
-            ]
-        )
-        self.local_causal_encoder_norm = norm_layer(encoder_embed_dim)
-        
-        # ========= Feature Fusion =========
-        # 极简的特征融合：只用一个线性层
-        self.feature_fusion = nn.Linear(encoder_embed_dim * 2, encoder_embed_dim)
-        
-        # 使用简单的λ参数控制特征融合权重，避免训练门控网络
-        self.lambda_local = 0.1  # 使用很小的权重，避免破坏原始特征
 
         # ========= Decoder =========
         self.decoder_embed = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=True)
@@ -370,6 +268,32 @@ class MAR(nn.Module):
         # ========= Decoder Norm =========
         self.decoder_norm = norm_layer(decoder_embed_dim)
 
+        # ========= Patch transformer layers with ToMe =========
+        if self.token_pruning:
+            self.encoder_blocks.cls_token = None
+            tome.patch.timm(self.encoder_blocks, trace_source=True)
+            self.decoder_blocks.cls_token = None
+            tome.patch.timm(self.decoder_blocks, trace_source=True)
+
+            initial_token_num = self.seq_len * self.n_frames
+            if self.language_emb_model == "clip":
+                if self.language_emb_model_type == 1:
+                    initial_token_num += self.buffer_size_text
+            
+            encoder_r, decoder_r = [0]*12, [0]*12
+            for i in range(len(self.encoder_blocks)):
+                encoder_r[i] = int(
+                    initial_token_num * self.pruning_ratios[0][i]
+                )
+            for i in range(len(self.decoder_blocks)):
+                decoder_r[i] = int(
+                    initial_token_num * self.pruning_ratios[1][i]
+                )
+            self.encoder_r = encoder_r
+            self.decoder_r = decoder_r
+            print("Encoder r:", encoder_r)
+            print("Decoder r:", decoder_r)
+
         # ========= Diffusion Temporal and Spatial Embedding =========
         self.diffusion_temporal_embed = nn.Parameter(
             torch.zeros(1, self.n_frames, decoder_embed_dim)
@@ -379,22 +303,21 @@ class MAR(nn.Module):
         )
 
         # ========= Initialize Weights =========
-        # 先初始化所有参数
         self.initialize_weights()
-        
-        # ========= Copy Parameters from Original to Local Causal =========
-        # 复制训练好的参数到local causal blocks
-        self.copy_encoder_parameters()
-        
-        # ========= Re-initialize Only New Parameters =========
-        # 重新初始化新添加的融合网络参数
-        self.initialize_fusion_weights()
 
         # ========= Video Diffusion Loss =========
         self.predict_video = predict_video
+
+        diffloss_options = {False: DiffLoss, True: DiffLossUCGM}
+        diffactloss_options = {False: DiffActLoss, True: DiffActLossUCGM}
+
+        print("Using UCGM:", use_ucgm)
+        print("Using diffloss: ", diffloss_options[use_ucgm])
+        print("Using diffactloss: ", diffactloss_options[use_ucgm])
+
         if self.predict_video:
             # ========= Video Diffusion Loss =========
-            self.diffloss = DiffLoss(
+            self.diffloss = diffloss_options[use_ucgm](
                 target_channels=self.token_embed_dim,
                 z_channels=decoder_embed_dim,
                 width=diffloss_w,
@@ -408,7 +331,7 @@ class MAR(nn.Module):
 
             # ========= Wrist Video Diffusion Loss =========
             if self.predict_wrist_img:
-                self.diffloss_wrist = DiffLoss(
+                self.diffloss_wrist = diffloss_options[use_ucgm](
                     target_channels=self.token_embed_dim,
                     z_channels=decoder_embed_dim,
                     width=diffloss_w,
@@ -422,7 +345,7 @@ class MAR(nn.Module):
 
         # ========= Action Diffusion Loss =========
         if self.predict_action:
-            self.diffactloss = DiffActLoss(
+            self.diffactloss = diffactloss_options[use_ucgm](
                 target_channels=act_dim,
                 z_channels=decoder_embed_dim,
                 width=diffloss_act_w,
@@ -433,16 +356,17 @@ class MAR(nn.Module):
                 act_model_type=action_model_params["act_model_type"],
                 act_diff_training_steps=act_diff_training_steps,
                 act_diff_testing_steps=act_diff_testing_steps,
-                num_attention_heads=action_model_params.get("num_attention_heads", 8), #new
+                diff_model_type=action_model_params["diff_model_type"] if "diff_model_type" in action_model_params else "MLP",
                 language_emb_model=self.language_emb_model,
                 language_emb_model_type=self.language_emb_model_type,
+                ucgmts_config=ucgmts_config
             )
+        # hi
 
-        
         # ========= Proprioception Diffusion Loss =========
         if self.predict_proprioception:
             if self.task_name == "umi":
-                self.diffproploss = DiffActLoss(
+                self.diffproploss = diffactloss_options[use_ucgm](
                     target_channels=6,
                     z_channels=decoder_embed_dim,
                     width=diffloss_act_w,
@@ -456,24 +380,23 @@ class MAR(nn.Module):
                     language_emb_model=self.language_emb_model,
                     language_emb_model_type=self.language_emb_model_type,
                 )
-            elif self.task_name == 'toolhang':
-                self.diffproploss = DiffActLoss(
-                        target_channels=9,
-                        z_channels=decoder_embed_dim,
-                        width=diffloss_act_w,
-                        depth=diffloss_act_d,
-                        num_sampling_steps=num_sampling_steps,
-                        grad_checkpointing=grad_checkpointing,
-                        n_frames=self.n_frames,
-                        act_model_type=action_model_params["act_model_type"],
-                        act_diff_training_steps=act_diff_training_steps,
-                        act_diff_testing_steps=act_diff_testing_steps,
-                        language_emb_model=self.language_emb_model,
-                        language_emb_model_type=self.language_emb_model_type,
-                    )
+            elif self.task_name == "toolhang":
+                self.diffproploss = diffactloss_options[use_ucgm](
+                    target_channels=9,
+                    z_channels=decoder_embed_dim,
+                    width=diffloss_act_w,
+                    depth=diffloss_act_d,
+                    num_sampling_steps=num_sampling_steps,
+                    grad_checkpointing=grad_checkpointing,
+                    n_frames=self.n_frames,
+                    act_model_type=action_model_params["act_model_type"],
+                    act_diff_training_steps=act_diff_training_steps,
+                    act_diff_testing_steps=act_diff_testing_steps,
+                    language_emb_model=self.language_emb_model,
+                    language_emb_model_type=self.language_emb_model_type,
+                )
             else:
                 raise NotImplementedError
-            
 
     def initialize_weights(self):
         # parameters
@@ -506,52 +429,6 @@ class MAR(nn.Module):
 
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
-
-    def copy_encoder_parameters(self):
-        """Copy parameters from original encoder blocks to local causal encoder blocks"""
-        for i, (orig_block, local_block) in enumerate(zip(self.encoder_blocks, self.local_causal_encoder_blocks)):
-            # Copy attention parameters
-            local_block.attn.qkv.weight.data = orig_block.attn.qkv.weight.data.clone()
-            if orig_block.attn.qkv.bias is not None:
-                local_block.attn.qkv.bias.data = orig_block.attn.qkv.bias.data.clone()
-            
-            local_block.attn.proj.weight.data = orig_block.attn.proj.weight.data.clone()
-            if orig_block.attn.proj.bias is not None:
-                local_block.attn.proj.bias.data = orig_block.attn.proj.bias.data.clone()
-            
-            # Copy MLP parameters
-            local_block.mlp.fc1.weight.data = orig_block.mlp.fc1.weight.data.clone()
-            if orig_block.mlp.fc1.bias is not None:
-                local_block.mlp.fc1.bias.data = orig_block.mlp.fc1.bias.data.clone()
-            
-            local_block.mlp.fc2.weight.data = orig_block.mlp.fc2.weight.data.clone()
-            if orig_block.mlp.fc2.bias is not None:
-                local_block.mlp.fc2.bias.data = orig_block.mlp.fc2.bias.data.clone()
-            
-            # Copy normalization parameters
-            local_block.norm1.weight.data = orig_block.norm1.weight.data.clone()
-            local_block.norm1.bias.data = orig_block.norm1.bias.data.clone()
-            
-            local_block.norm2.weight.data = orig_block.norm2.weight.data.clone()
-            local_block.norm2.bias.data = orig_block.norm2.bias.data.clone()
-        
-        # Copy encoder norm parameters
-        self.local_causal_encoder_norm.weight.data = self.encoder_norm.weight.data.clone()
-        self.local_causal_encoder_norm.bias.data = self.encoder_norm.bias.data.clone()
-
-    def initialize_fusion_weights(self):
-        """Initialize only the fusion network weights, preserving copied parameters"""
-        # 只初始化融合网络的参数
-        for m in self.feature_fusion.modules():
-            if isinstance(m, nn.Linear):
-                torch.nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-            elif isinstance(m, nn.LayerNorm):
-                if m.bias is not None:
-                    nn.init.constant_(m.bias, 0)
-                if m.weight is not None:
-                    nn.init.constant_(m.weight, 1.0)
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
@@ -782,10 +659,10 @@ class MAR(nn.Module):
         # ========= Position Embedding =========
         temporal_pos_embed_expanded = self.temporal_pos_embed.unsqueeze(2).expand(
             -1, -1, S, -1
-        ) 
+        )
         spatial_pos_embed_expanded = self.spatial_pos_embed.unsqueeze(1).expand(
             -1, T, -1, -1
-        ) 
+        )
 
         combined_pos_embed = (
             temporal_pos_embed_expanded + spatial_pos_embed_expanded
@@ -822,58 +699,33 @@ class MAR(nn.Module):
         # ========= Normalization =========
         x = self.z_proj_ln(x)
 
-        # ========= Transformer Encoder Blocks =========
-        # Original transformer processing
+        # ========= Transformer Encoder Blocks ========
         if self.grad_checkpointing and not torch.jit.is_scripting():
             for block in self.encoder_blocks:
                 x = checkpoint(block, x)
         else:
             for block in self.encoder_blocks:
                 x = block(x)
-        global_features = self.encoder_norm(x)
+        x = self.encoder_norm(x)
 
-        # ========= Local Causal Transformer Processing =========
-        # Process with local causal attention (copy of original processing)
-        local_x = x.clone()  # Start with the same input
-        if self.grad_checkpointing and not torch.jit.is_scripting():
-            for block in self.local_causal_encoder_blocks:
-                local_x = checkpoint(block, local_x)
-        else:
-            for block in self.local_causal_encoder_blocks:
-                local_x = block(local_x)
-        local_features = self.local_causal_encoder_norm(local_x)
-        
-        # ========= Feature Fusion =========
-        # 现在使用真正的local attention特征进行融合
-        lambda_local = self.lambda_local
-        
-        # 残差连接：global_features + small_adjustment
-        adjustment = self.feature_fusion(
-            torch.cat([global_features, local_features], dim=-1)
-        )
-        
-        # 使用很小的权重来避免破坏原始特征
-        fused_x = global_features + lambda_local * adjustment
-
-        return fused_x
+        return x
 
     def forward_mae_decoder(self, x, mask):
         B, T, S = mask.size()
         mask = rearrange(mask, "b t s -> b (t s)")
+
+        # don't disturb the last channel (index channel)
         x = self.decoder_embed(x)
+
         _, _, embed_dim = x.shape
 
         # ========= Position Embedding =========
         decoder_temporal_pos_embed_expanded = self.decoder_temporal_pos_embed.unsqueeze(
             2
-        ).expand(
-            -1, -1, S, -1
-        ) 
+        ).expand(-1, -1, S, -1)
         decoder_spatial_pos_embed_expanded = self.decoder_spatial_pos_embed.unsqueeze(
             1
-        ).expand(
-            -1, T, -1, -1
-        ) 
+        ).expand(-1, T, -1, -1)
         decoder_combined_pos_embed = (
             decoder_temporal_pos_embed_expanded + decoder_spatial_pos_embed_expanded
         ).reshape(1, T * S, embed_dim)
@@ -889,7 +741,15 @@ class MAR(nn.Module):
         else:
             combined_pos_embed = decoder_combined_pos_embed
 
-        x = x + combined_pos_embed
+        # ========= Token Restoration =========
+        if self.token_pruning:
+            if self.restore_after_encoder:
+                x = self.restore_tokens_tome(x, enc_only=True)
+                x = x + combined_pos_embed
+            else:
+                x = x + (self.encoder_blocks._tome_info['source'] / self.encoder_blocks._tome_info['source'].sum(dim=2, keepdim=True)) @ combined_pos_embed
+        else:
+            x = x + combined_pos_embed
 
         # ========= Transformer Decoder Blocks =========
         if self.grad_checkpointing and not torch.jit.is_scripting():
@@ -898,29 +758,57 @@ class MAR(nn.Module):
         else:
             for block in self.decoder_blocks:
                 x = block(x)
+
         x = self.decoder_norm(x)
 
+        # if self.token_pruning:
+        #     if self.restore_after_encoder:
+        #         x = self.restore_tokens_tome(x, dec_only=True)
+        #     else:
+        #         x = self.restore_tokens_tome(x)
+
         # ========= Language Embedding =========
-        if self.language_emb_model == "clip":
-            if self.language_emb_model_type == 1:
-                x = x[:, self.buffer_size_text :]
+        # if self.language_emb_model == "clip":
+        #     if self.language_emb_model_type == 1:
+        #         x = x[:, self.buffer_size_text :]
+
 
         # ========= Diffusion Position Embedding =========
         diffusion_temporal_pos_embed_expanded = self.diffusion_temporal_embed.unsqueeze(
             2
-        ).expand(
-            -1, -1, S, -1
-        )
+        ).expand(-1, -1, S, -1)
         diffusion_spatial_pos_embed_expanded = self.diffusion_spatial_embed.unsqueeze(
             1
-        ).expand(
-            -1, T, -1, -1
-        )
+        ).expand(-1, T, -1, -1)
         diffusion_combined_pos_embed = (
             diffusion_temporal_pos_embed_expanded + diffusion_spatial_pos_embed_expanded
         ).reshape(1, T * S, embed_dim)
 
-        x = x + diffusion_combined_pos_embed
+        if self.token_pruning:
+            enc_source = self.encoder_blocks._tome_info['source']   # [B, N_enc, N_orig]
+            dec_source = self.decoder_blocks._tome_info['source']   # [B, N_dec, N_enc]
+            # Combine sources: ORIGINAL -> pruned decoder tokens
+            source = torch.bmm(dec_source.float(), enc_source.float())  # [B, N_dec, N_orig]
+
+            # Keep only the visual columns (length T*S == 1024). If no text, vis_start=0.
+            has_text = (self.language_emb_model == "clip" and self.language_emb_model_type == 1)
+            vis_start = self.buffer_size_text if has_text else 0
+            source = source[:, :, vis_start:vis_start + (T * S)]       # [B, N_dec, 1024]
+
+            # Row-normalize
+            source = source / (source.sum(dim=2, keepdim=True) + 1e-6)
+
+            # Expand diffusion PE to batch: [B, 1024, 768]
+            diff_pe = diffusion_combined_pos_embed.expand(x.size(0), -1, -1)
+
+            # Add reduced diffusion PEs
+            x = x + torch.bmm(source, diff_pe)  # [B, N_dec, 768]
+
+        else:
+            if self.language_emb_model == "clip":
+                if self.language_emb_model_type == 1:
+                    x = x[:, self.buffer_size_text :]
+            x = x + diffusion_combined_pos_embed
 
         return x
 
@@ -954,7 +842,7 @@ class MAR(nn.Module):
 
         elif task_mode == "policy_model" or task_mode == "inverse_model":
             act_loss = self.diffactloss(
-                target=nactions, z=z, task_mode=task_mode, text_latents=text_latents
+                z=z, target=nactions, task_mode=task_mode, text_latents=text_latents
             )
             video_loss = torch.tensor(0.0).to(self.device)
             loss = act_loss
@@ -973,7 +861,7 @@ class MAR(nn.Module):
                     z=z, target=target, mask=mask, text_latents=text_latents
                 )
             act_loss = self.diffactloss(
-                target=nactions, z=z, task_mode=task_mode, text_latents=text_latents
+                z=z, target=nactions, task_mode=task_mode, text_latents=text_latents
             )
             loss = video_loss + act_loss
 
@@ -994,22 +882,22 @@ class MAR(nn.Module):
         text_latents=None,
         task_mode=None,
         proprioception_input={},
-    ):
+    ):  # -> (loss, video_loss, act_loss)
         self.device = cond.device
+        if self.token_pruning:
+            self.prepare_tome()
+
         B, T, C, H, W = imgs.size()
 
         # ========= Patchify =========
-        imgs = rearrange(
-            imgs, "b t c h w -> (b t) c h w"
-        )
+        imgs = rearrange(imgs, "b t c h w -> (b t) c h w")
         x = self.patchify(imgs)
         x = rearrange(x, "(b t) seq_len c -> b t seq_len c", b=B)
 
+        # ========= Condition =========
         cond = rearrange(cond, "b t c h w -> (b t) c h w")
         cond = self.patchify(cond)
-        cond = rearrange(
-            cond, "(b t) seq_len c -> b t seq_len c", b=B
-        )
+        cond = rearrange(cond, "(b t) seq_len c -> b t seq_len c", b=B) # B, 4, 256, 16
 
         # ========= Proprioception =========
         if self.use_proprioception:
@@ -1027,20 +915,18 @@ class MAR(nn.Module):
                 )
 
         # ========= Predicted Wrist Image =========
-        if self.predict_wrist_img:
-            if "pred_second_image_z" in proprioception_input:
-                proprioception_input["pred_second_image_z"] = rearrange(
-                    proprioception_input["pred_second_image_z"],
-                    "b t c h w -> (b t) c h w",
-                )
-                proprioception_input["pred_second_image_z"] = self.patchify(
-                    proprioception_input["pred_second_image_z"]
-                )
-                proprioception_input["pred_second_image_z"] = rearrange(
-                    proprioception_input["pred_second_image_z"],
-                    "(b t) seq_len c -> b t seq_len c",
-                    b=B,
-                )
+        if self.predict_wrist_img and "pred_second_image_z" in proprioception_input:
+            proprioception_input["pred_second_image_z"] = rearrange(
+                proprioception_input["pred_second_image_z"], "b t c h w -> (b t) c h w"
+            )
+            proprioception_input["pred_second_image_z"] = self.patchify(
+                proprioception_input["pred_second_image_z"]
+            )
+            proprioception_input["pred_second_image_z"] = rearrange(
+                proprioception_input["pred_second_image_z"],
+                "(b t) seq_len c -> b t seq_len c",
+                b=B,
+            )
 
         if text_latents is not None and hasattr(self, "text_proj_cond"):
             if self.language_emb_model_type == 1:
@@ -1048,19 +934,15 @@ class MAR(nn.Module):
 
         gt_latents = x.clone().detach()
 
-        # ========= Predicted Wrist Image =========
-        if self.predict_wrist_img:
-            if "pred_second_image_z" in proprioception_input:
-                gt_wrist_latents = (
-                    proprioception_input["pred_second_image_z"].clone().detach()
-                )
-                gt_wrist_latents = rearrange(
-                    gt_wrist_latents, "b t s c -> b (t s) c"
-                )
+        if self.predict_wrist_img and "pred_second_image_z" in proprioception_input:
+            gt_wrist_latents = (
+                proprioception_input["pred_second_image_z"].clone().detach()
+            )
+            gt_wrist_latents = rearrange(gt_wrist_latents, "b t s c -> b (t s) c")
 
         # ========= Sample Orders =========
         orders = self.sample_orders(bsz=B)
-        mask = self.random_masking(x, orders)  # [1, 4, 256]
+        mask = self.random_masking(x, orders)
 
         # ========= MAE Encoder =========
         x = self.forward_mae_encoder(
@@ -1077,26 +959,30 @@ class MAR(nn.Module):
         # ========= MAE Decoder =========
         z = self.forward_mae_decoder(x, mask)
 
-        # ========= Diffloss over Video and Action =========
+        # ========= Reshape for loss =========
         mask = rearrange(mask, "b t s -> b (t s)")
-        gt_latents = rearrange(
-            gt_latents, "b t s c -> b (t s) c"
-        )
+        gt_latents = rearrange(gt_latents, "b t s c -> b (t s) c")
 
-        # ========= Predict Proprioception =========
+        # ========= Predict Proprioception & Loss =========
         if self.predict_proprioception:
+            # Determine gt_properception
             if self.task_name == "umi":
                 gt_properception = proprioception_input[
                     "robot0_eef_rot_axis_angle_wrt_start_pred"
                 ]
             elif self.task_name == "toolhang":
-                gt_properception = torch.cat([proprioception_input['robot0_eef_pos_pred'], 
-                                              proprioception_input['robot0_eef_quat_pred'], 
-                                              proprioception_input['robot0_gripper_qpos_pred']], 
-                                             dim=-1)
+                gt_properception = torch.cat(
+                    [
+                        proprioception_input["robot0_eef_pos_pred"],
+                        proprioception_input["robot0_eef_quat_pred"],
+                        proprioception_input["robot0_gripper_qpos_pred"],
+                    ],
+                    dim=-1,
+                )
             else:
                 raise NotImplementedError
 
+            # Loss computation
             if self.predict_wrist_img:
                 loss, video_loss, act_loss = self.forward_loss(
                     z=z,
@@ -1141,6 +1027,23 @@ class MAR(nn.Module):
 
         return loss, video_loss, act_loss
 
+    def prepare_tome(self):
+        self.encoder_blocks._tome_info['r'] = list(self.encoder_r)
+        self.decoder_blocks._tome_info['r'] = list(self.decoder_r)
+        self.encoder_blocks._tome_info['size'] = None
+        self.encoder_blocks._tome_info['source'] = None
+        self.decoder_blocks._tome_info['size'] = None
+        self.decoder_blocks._tome_info['source'] = None
+
+    
+    def restore_tokens_tome(self, x, enc_only=False, dec_only=False):
+        if not enc_only and not all(r == 0 for r in self.decoder_r):
+            x = torch.bmm(self.decoder_blocks._tome_info['source'].transpose(1, 2).float(), x)
+        if not dec_only and not all(r == 0 for r in self.encoder_r):
+            x = torch.bmm(self.encoder_blocks._tome_info['source'].transpose(1, 2).float(), x)
+        return x
+
+        
     def sample_tokens(
         self,
         bsz,
@@ -1160,11 +1063,13 @@ class MAR(nn.Module):
     ):
         self.device = cond.device
         B, T, C, H, W = cond.size()
+
+         # ======= Save Images ========
+        # Save each image from (B, T, C, H, W)
+                
         cond = rearrange(cond, "b t c h w -> (b t) c h w")
         cond = self.patchify(cond)
-        cond = rearrange(
-            cond, "(b t) seq_len c -> b t seq_len c", b=B
-        )
+        cond = rearrange(cond, "(b t) seq_len c -> b t seq_len c", b=B)
 
         # ========= Proprioception =========
         if self.use_proprioception:
@@ -1189,9 +1094,7 @@ class MAR(nn.Module):
         if task_mode == "inverse_model":
             x = rearrange(x, "b t c h w -> (b t) c h w")
             x = self.patchify(x)
-            tokens = rearrange(
-                x, "(b t) seq_len c -> b t seq_len c", b=B
-            )
+            tokens = rearrange(x, "(b t) seq_len c -> b t seq_len c", b=B)
             mask = torch.zeros(bsz, self.n_frames, self.seq_len).to(self.device)
         else:
             # init and sample generation orders
@@ -1220,6 +1123,8 @@ class MAR(nn.Module):
                     cur_wrist_tokens = proprioception_input[
                         "pred_second_image_z"
                     ].clone()
+                if self.token_pruning:
+                    self.prepare_tome()
 
                 x = self.forward_mae_encoder(
                     tokens,
@@ -1300,6 +1205,9 @@ class MAR(nn.Module):
                 sampled_token_latent = self.diffloss.sample(
                     z, temperature, cfg_iter, text_latents=text_latents
                 )
+                # sampled_token_latent = self.diffloss.sample_ucgm(
+                #     z, temperature, cfg_iter, text_latents=text_latents
+                # )
 
                 if not cfg == 1.0:
                     sampled_token_latent, _ = sampled_token_latent.chunk(
@@ -1368,7 +1276,7 @@ def mar_tiny(**kwargs):
         decoder_num_heads=6,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        **kwargs
+        **kwargs,
     )
     return model
 
@@ -1383,7 +1291,7 @@ def mar_small(**kwargs):
         decoder_num_heads=6,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        **kwargs
+        **kwargs,
     )
     return model
 
@@ -1398,7 +1306,7 @@ def mar_base(**kwargs):
         decoder_num_heads=12,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        **kwargs
+        **kwargs,
     )
     return model
 
@@ -1413,7 +1321,7 @@ def mar_large(**kwargs):
         decoder_num_heads=16,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        **kwargs
+        **kwargs,
     )
     return model
 
@@ -1428,6 +1336,6 @@ def mar_huge(**kwargs):
         decoder_num_heads=16,
         mlp_ratio=4,
         norm_layer=partial(nn.LayerNorm, eps=1e-6),
-        **kwargs
+        **kwargs,
     )
     return model

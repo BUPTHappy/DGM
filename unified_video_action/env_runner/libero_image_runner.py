@@ -47,15 +47,16 @@ def create_env(env_meta, shape_meta, enable_render=True):
     ObsUtils.initialize_obs_modality_mapping_from_dict(modality_mapping)
 
     if env_meta["bddl_file"] not in bddl_file_name_dict.values():
-        print("convert bddl filename")
-        print(env_meta["bddl_file"])
-        print(env_meta["env_kwargs"]["bddl_file_name"])
+        #print("convert bddl filename")
+        #print(env_meta["bddl_file"])
+        #print(env_meta["env_kwargs"]["bddl_file_name"])
         env_meta["bddl_file"] = bddl_file_name_dict[env_meta["bddl_file"]]
         env_meta["env_kwargs"]["bddl_file_name"] = env_meta["bddl_file"]
-    else:
-        print("use existing bddl file")
-        print(env_meta["bddl_file"])
-        print(env_meta["env_kwargs"]["bddl_file_name"])
+    #else:
+        
+        #print("use existing bddl file")
+        #print(env_meta["bddl_file"])
+        #print(env_meta["env_kwargs"]["bddl_file_name"])
 
     env = EnvUtils.create_env_from_metadata(
         env_meta=env_meta,

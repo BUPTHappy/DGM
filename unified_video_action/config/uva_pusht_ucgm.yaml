@@ -2,8 +2,8 @@ name: uva
 
 defaults:
   - _self_
-  - task: libero10
-  - model: uva
+  - task: pusht
+  - model: uva_ucgm_few
 
 dataloader:
   batch_size: 32
@@ -20,7 +20,7 @@ val_dataloader:
   shuffle: false
 
 training:
-  checkpoint_every: 50
+  checkpoint_every: 10
   debug: false
   device: cuda:0
   gradient_accumulate_every: 1
@@ -30,13 +30,14 @@ training:
   max_val_steps: null
   num_epochs: 3050
   resume: true
-  rollout_every: 50
+  rollout_every: 10
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0
   use_ema: true
   val_every: 1
   mixed_precision: 'fp16'
+  profile: false
   
 checkpoint:
   save_last_ckpt: true
@@ -59,16 +60,17 @@ logging:
   group: null
   id: null
   mode: online
-  name: train_uva_libero10
+  name: train_uva_pusht
   project: unified_video_action
-  resume: true
+  resume: false
   tags:
-  - train_uva_libero10
-  - libero10
+  - train_uva_pusht
+  - pusht
   - default
 
-multi_run:
-  run_dir: data/outputs/train_uva_libero10
-  wandb_name_base: train_uva_libero10
+payload: checkpoints/pusht.ckpt
+freeze_submodules: true
 
-save_folder: ""
+multi_run:
+  run_dir: data/outputs/train_uva_pusht
+  wandb_name_base: train_uva_pusht

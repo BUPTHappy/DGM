@@ -4,6 +4,7 @@ from typing import Dict, Tuple
 import torch.nn.functional as F
 import random
 import numpy as np
+from torchvision.utils import save_image
 
 from unified_video_action.model.common.normalizer import LinearNormalizer
 from unified_video_action.policy.base_image_policy import BaseImagePolicy
@@ -22,7 +23,7 @@ from unified_video_action.utils.data_utils import (
     normalize_past_action,
     unnormalize_future_action,
 )
-from unified_video_action.model.autoregressive import mar_con_unified as mar
+from unified_video_action.model.autoregressive import mar_con_unified  as mar
 from unified_video_action.vae.vaekl import AutoencoderKL
 from unified_video_action.utils.language_model import (
     get_text_model,
@@ -77,6 +78,13 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
             for param in self.text_model.parameters():
                 param.requires_grad = False
 
+        if hasattr(autoregressive_model_params, 'use_ucgm'):
+            use_ucgm = autoregressive_model_params.use_ucgm
+        else:
+            use_ucgm = False
+            
+
+
         ## =========================== main model ===========================
         self.model = mar.__dict__[autoregressive_model_params.model_size](
             img_size=autoregressive_model_params.img_size,
@@ -107,8 +115,12 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
             task_name=self.task_name,
             language_emb_model=language_emb_model,
             shape_meta=shape_meta,
+            token_pruning=getattr(autoregressive_model_params, 'token_pruning', False),
+            restore_after_encoder=getattr(autoregressive_model_params, 'restore_after_encoder', False),
+            pruning_ratios=getattr(autoregressive_model_params, 'pruning_ratios', None),
+            use_ucgm=use_ucgm,
+            ucgmts_config=getattr(autoregressive_model_params, "ucgmts_config", {})
         )
-        
 
         ## =========================== load pretrained model ===========================
         self.pretrained_model_path = autoregressive_model_params.pretrained_model_path
@@ -118,10 +130,8 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
             else:
                 print('pretrained model not found: ', self.pretrained_model_path)
         
-        # Apply freeze and LoRA settings after model loading
-        self.apply_freeze_and_lora()
-        
         self.normalizer = LinearNormalizer()
+
 
         if self.selected_training_mode is None:
             if len(self.task_modes) == 0:
@@ -184,14 +194,8 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
                 print("----------------------------------------------------------------------")
                 
                 assert len(model_state_dict) > 0
-                if len(pretrained_state_dict) > 0:
-                    model_state_dict.update(pretrained_state_dict)
-                    print(f"Loaded {len(pretrained_state_dict)} compatible parameters from pretrained model")
-                else:
-                    print("Warning: No compatible parameters found in pretrained model, continuing without loading pretrained weights")
-        
-        # Load distilled operator weights if specified
-        self.load_distilled_weights()
+                assert len(pretrained_state_dict) > 0
+                model_state_dict.update(pretrained_state_dict)
 
                 missing_keys, unexpected_keys = self.model.load_state_dict(
                     model_state_dict, strict=False
@@ -238,15 +242,14 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
         
         obs_dict = resize_image_eval(self.task_name, obs_dict)
         B, T, C, H, W = obs_dict["image"].shape
-
         ## language goal
         text_latents = None
         if self.language_emb_model is not None:
             if "umi" in self.task_name:
                 text_latents = language_goal
             else:
-                print("predict_action language_goal: ", language_goal)
-                print(self.task_name, "max_length", self.max_length)
+                #print("predict_action language_goal: ", language_goal)
+                #print(self.task_name, "max_length", self.max_length)
 
                 if self.language_emb_model == "clip":
                     text_tokens = self.tokenizer(
@@ -289,11 +292,11 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
         if self.use_proprioception:
             if "second_image" in proprioception_input:
                 second_image_z, _ = extract_latent_autoregressive(
-                    self.vae_model, proprioception_input["second_image"], use_checkpointing=getattr(self, 'use_vae_checkpointing', False), chunk_size=getattr(self, 'vae_chunk_size', 4), batch_chunk_size=getattr(self, 'vae_batch_chunk_size', 8)
+                    self.vae_model, proprioception_input["second_image"]
                 )
                 proprioception_input["second_image_z"] = second_image_z
 
-        c, latent_size = extract_latent_autoregressive(self.vae_model, c.detach(), use_checkpointing=getattr(self, 'use_vae_checkpointing', False), chunk_size=getattr(self, 'vae_chunk_size', 4), batch_chunk_size=getattr(self, 'vae_batch_chunk_size', 8))
+        c, latent_size = extract_latent_autoregressive(self.vae_model, c.detach())
 
         z, act_out = self.model.sample_tokens(
             bsz=B,
@@ -356,34 +359,30 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
         learning_rate: float,
         betas: Tuple[float, float],
     ) -> torch.optim.Optimizer:
+        # 1. Build your raw weight‐decay groups
+        raw_groups = self.add_weight_decay(self.model, weight_decay=weight_decay)
 
-        decay = []
-        no_decay = []
-        local_decay = []
-        local_no_decay = []
-
-        for name, param in self.model.named_parameters():
-            if not param.requires_grad:
+        # 2. Filter out any parameters that have been frozen
+        filtered_groups = []
+        for group in raw_groups:
+            # keep only those params that still require gradients
+            params = [p for p in group["params"] if p.requires_grad]
+            if not params:
                 continue
-            if "local_causal_blocks" in name or 'feature_fusion' in name:
-                if len(param.shape) == 1 or name.endswith(".bias"):
-                    local_no_decay.append(param)
-                else:
-                    local_decay.append(param)
-            else:
-                if len(param.shape) == 1 or name.endswith(".bias"):
-                    no_decay.append(param)
-                else:
-                    decay.append(param)
-                    
-        return torch.optim.AdamW([
-            #原来的参数 - 小学习率
-            {"params": no_decay, "weight_decay": 0.0, "lr": learning_rate * 0.1},
-            {"params": decay, "weight_decay": weight_decay, "lr": learning_rate * 0.1},
-            #新的参数 - 正常的学习率
-            {"params": local_no_decay, "weight_decay": 0.0, "lr": learning_rate},
-            {"params": local_decay, "weight_decay": weight_decay, "lr": learning_rate},
-        ],betas=betas)
+            # preserve the group's weight_decay (and any other keys)
+            new_group = {k: v for k, v in group.items() if k != "params"}
+            new_group["params"] = params
+            filtered_groups.append(new_group)
+        
+
+        # 3. Instantiate optimizer only over the filtered (trainable) params
+        optimizer = torch.optim.AdamW(filtered_groups, lr=learning_rate, betas=betas)
+
+        # 4. (Optional) stamp an initial_lr on each group for schedulers, etc.
+        for pg in optimizer.param_groups:
+            pg.setdefault("initial_lr", pg["lr"])
+
+        return optimizer
 
     def compute_loss(self, batch, **kwargs):
         B, T, C, H, W = batch["obs"]["image"].size()
@@ -452,100 +451,3 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
 
     def forward(self, batch, **kwargs):
         return self.compute_loss(batch, **kwargs)
-    
-    def load_distilled_weights(self):
-        """Load distilled operator weights for cross-attention head"""
-        # Check if head_init_paths is specified in action_model_params
-        if hasattr(self.autoregressive_model_params, 'action_model_params') and \
-           hasattr(self.autoregressive_model_params.action_model_params, 'head_init_paths'):
-            
-            head_init_paths = self.autoregressive_model_params.action_model_params.head_init_paths
-            
-            if head_init_paths and any(head_init_paths.values()):
-                print("----------------------------------------------------------------------")
-                print("Loading distilled operator weights for cross-attention head")
-                print("----------------------------------------------------------------------")
-                
-                # Load cross-attention weights
-                if head_init_paths.get('cross_attn') and os.path.exists(head_init_paths['cross_attn']):
-                    print(f"Loading cross-attention weights from: {head_init_paths['cross_attn']}")
-                    cross_attn_weights = torch.load(head_init_paths['cross_attn'], map_location='cpu')
-                    # Load into the diffusion action head
-                    if hasattr(self.model, 'diffactloss') and hasattr(self.model.diffactloss, 'net'):
-                        net = self.model.diffactloss.net
-                        if hasattr(net, 'cross_attn_blocks'):
-                            # Load into first cross-attention block
-                            net.cross_attn_blocks[0].load_state_dict(cross_attn_weights, strict=False)
-                            print("Cross-attention weights loaded successfully")
-                
-                # Load self-attention weights
-                if head_init_paths.get('self_attn') and os.path.exists(head_init_paths['self_attn']):
-                    print(f"Loading self-attention weights from: {head_init_paths['self_attn']}")
-                    self_attn_weights = torch.load(head_init_paths['self_attn'], map_location='cpu')
-                    # Load into the diffusion action head
-                    if hasattr(self.model, 'diffactloss') and hasattr(self.model.diffactloss, 'net'):
-                        net = self.model.diffactloss.net
-                        if hasattr(net, 'cross_attn_blocks'):
-                            # Load into first cross-attention block (reusing the same structure)
-                            net.cross_attn_blocks[0].load_state_dict(self_attn_weights, strict=False)
-                            print("Self-attention weights loaded successfully")
-                
-                # Load MLP weights
-                if head_init_paths.get('mlp') and os.path.exists(head_init_paths['mlp']):
-                    print(f"Loading MLP weights from: {head_init_paths['mlp']}")
-                    mlp_weights = torch.load(head_init_paths['mlp'], map_location='cpu')
-                    # Load into the diffusion action head
-                    if hasattr(self.model, 'diffactloss') and hasattr(self.model.diffactloss, 'net'):
-                        net = self.model.diffactloss.net
-                        if hasattr(net, 'cross_attn_blocks'):
-                            # Load into first cross-attention block's MLP
-                            net.cross_attn_blocks[0].mlp.load_state_dict(mlp_weights, strict=False)
-                            print("MLP weights loaded successfully")
-                
-                print("----------------------------------------------------------------------")
-                print("Distilled weights loading completed")
-                print("----------------------------------------------------------------------")
-            else:
-                print("No distilled weights specified, using random initialization")
-    
-    def apply_freeze_and_lora(self):
-        """Apply parameter freezing and LoRA if specified"""
-        # Check if finetune config is available
-        if hasattr(self.autoregressive_model_params, 'action_model_params') and \
-           hasattr(self.autoregressive_model_params.action_model_params, 'finetune'):
-            
-            finetune_config = self.autoregressive_model_params.action_model_params.finetune
-            
-            if finetune_config.get('freeze_encoder', False):
-                print("----------------------------------------------------------------------")
-                print("Freezing encoder parameters")
-                print("----------------------------------------------------------------------")
-                
-                # Freeze encoder blocks
-                for param in self.model.encoder_blocks.parameters():
-                    param.requires_grad = False
-                
-                # Freeze local causal encoder blocks
-                for param in self.model.local_causal_encoder_blocks.parameters():
-                    param.requires_grad = False
-                
-                # Freeze encoder norm
-                for param in self.model.encoder_norm.parameters():
-                    param.requires_grad = False
-                
-                # Freeze local causal encoder norm
-                for param in self.model.local_causal_encoder_norm.parameters():
-                    param.requires_grad = False
-                
-                # Freeze feature fusion
-                for param in self.model.feature_fusion.parameters():
-                    param.requires_grad = False
-                
-                print("Encoder parameters frozen")
-            
-            if finetune_config.get('use_lora', False):
-                print("----------------------------------------------------------------------")
-                print("LoRA support not yet implemented")
-                print("----------------------------------------------------------------------")
-                # TODO: Implement LoRA support
-                pass

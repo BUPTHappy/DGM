@@ -35,9 +35,19 @@ policy:
     diffloss_w: 1024
     diffloss_act_d: 6
     diffloss_act_w: 1024
-    num_sampling_steps: "100"
     diffusion_batch_mul: 1
     grad_checkpointing: False
+    use_ucgm: True
+    num_sampling_steps: 2
+    ucgmts_config:
+      transport_type: "Linear"
+      consistc_ratio: 1.0
+      scaled_cbl_eps: 0.0
+      ema_decay_rate: 0.0
+      rfba_gap_steps: [0.001, 0.5]  # for 2 steps
+    token_pruning: False
+    pruning_ratios: None
+    restore_after_encoder: None
     #
     num_iter: 1
     cfg: 1
@@ -47,12 +57,11 @@ policy:
     #
     act_diff_training_steps: 1000
     act_diff_testing_steps: "100"
-    use_ucgm: False
-    token_pruning: False
     
   action_model_params:
     predict_action: True
     act_model_type: conv_fc
+    diff_model_type: MLP
   
   shift_action: True
     
@@ -62,5 +71,7 @@ policy:
     betas:
     - 0.9
     - 0.95
+save_folder : profiling/ucgm_dit_vs_mlp/dit.txt
+
 
 

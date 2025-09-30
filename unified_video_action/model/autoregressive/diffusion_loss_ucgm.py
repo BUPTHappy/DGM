@@ -3,9 +3,10 @@ import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
 import math
 from unified_video_action.model.autoregressive.diffusion import create_diffusion
+from unified_video_action.model.ucgm.ucgm import UCGMTS
 
 
-class DiffLoss(nn.Module):
+class DiffLossUCGM(nn.Module):
     """Diffusion Loss"""
 
     def __init__(
@@ -18,7 +19,7 @@ class DiffLoss(nn.Module):
         grad_checkpointing=False,
         **kwargs
     ):
-        super(DiffLoss, self).__init__()
+        super(DiffLossUCGM, self).__init__()
 
         self.n_frames = kwargs["n_frames"]
         self.language_emb_model = kwargs["language_emb_model"]
@@ -34,12 +35,26 @@ class DiffLoss(nn.Module):
             grad_checkpointing=grad_checkpointing,
         )
 
-        self.train_diffusion = create_diffusion(
-            timestep_respacing="", noise_schedule="cosine"
-        )
-        self.gen_diffusion = create_diffusion(
-            timestep_respacing=num_sampling_steps, noise_schedule="cosine"
-        )
+        self.num_sampling_steps = num_sampling_steps
+        if num_sampling_steps == "few":
+            self.ucgmts = UCGMTS(
+                    transport_type="Linear",
+                    lab_drop_ratio=0.1, # removed these for the other
+                    consistc_ratio=1.0, # removed these for the other
+                    scaled_cbl_eps=9.0, # removed these for the other
+                    ema_decay_rate=0.0,
+                    enhanced_range=[0.0, 0.75], # removed these for the other
+                    time_dist_ctrl=[0.8, 1.0, 1.0], # removed these for the other
+                    weight_funcion="Cosine" # removed these for the other
+                )
+        elif num_sampling_steps == "sample_only":
+            self.ucgmts = UCGMTS(
+                transport_type="TrigFlow"
+            )
+        else:
+            self.ucgmts = UCGMTS(
+                transport_type="TrigFlow",)
+       
 
     def forward(self, target, z, mask=None, conf_score=None, text_latents=None):
         # different noise over t and s
@@ -48,46 +63,51 @@ class DiffLoss(nn.Module):
         z = z.reshape(bsz * seq_len, -1)
         mask = mask.reshape(bsz * seq_len)
 
-        t = torch.randint(
-            0,
-            self.train_diffusion.num_timesteps,
-            (target.shape[0],),
-            device=target.device,
-        )
-
-        model_kwargs = dict(c=z)
-        loss_dict = self.train_diffusion.training_losses(
-            self.net, target, t, model_kwargs
-        )
-        loss = loss_dict["loss"]
+        loss = self.ucgmts.training_step(model=self.model_fn, x=target, c=z)
 
         if mask is not None:
             loss = (loss * mask).sum() / mask.sum()
         return loss.mean()
 
+    def model_fn(self, x, *args, **kwargs):
+        C = self.in_channels
+        model_output = self.net.forward(x, *args, **kwargs)
+        model_output, _ = torch.split(model_output, C, dim=1)
+        return model_output
+
     def sample(self, z, temperature=1.0, cfg=1.0, text_latents=None):
-        # diffusion loss sampling
-        if not cfg == 1.0:
-            noise = torch.randn(z.shape[0] // 2, self.in_channels).cuda()
-            noise = torch.cat([noise, noise], dim=0)
-            model_kwargs = dict(c=z, cfg_scale=cfg)
-            sample_fn = self.net.forward_with_cfg
+        noise = torch.randn(z.shape[0], self.in_channels).cuda()
+        model_kwargs = dict(c=z)
+        # hyperparameters from https://github.com/LINs-lab/UCGM/blob/main/configs/training_few_steps/in1k256_tit_xl_repae.yaml
+
+        if self.num_sampling_steps == 'few':
+            return self.ucgmts.uni_sample(
+                inital_noise_z=noise,
+                sampling_model=self.model_fn,
+                sampling_steps=2,
+                stochast_ratio=1.0,
+                extrapol_ratio=0.0,
+                sampling_order=1,
+                time_dist_ctrl=[1.0, 1.0, 1.0],
+                rfba_gap_steps=[0.001, 0.5],
+                **model_kwargs,
+            )[-1]
+        elif self.num_sampling_steps == 'sample_only':
+            print("Using sample only mode")
+            return self.ucgmts.uni_sample(
+                inital_noise_z=noise,
+                sampling_model=self.model_fn,
+                sampling_steps=100,
+                **model_kwargs,
+            )[-1]
         else:
-            noise = torch.randn(z.shape[0], self.in_channels).cuda()
-            model_kwargs = dict(c=z)
-            sample_fn = self.net.forward
-
-        sampled_token_latent = self.gen_diffusion.p_sample_loop(
-            sample_fn,
-            noise.shape,
-            noise,
-            clip_denoised=False,
-            model_kwargs=model_kwargs,
-            progress=False,
-            temperature=temperature,
-        )
-
-        return sampled_token_latent
+            return self.ucgmts.uni_sample(
+                inital_noise_z=noise,
+                sampling_model=self.model_fn,
+                sampling_steps=100,
+                extrapol_ratio=0.54,
+                **model_kwargs,
+            )[-1]
 
 
 def modulate(x, shift, scale):
@@ -220,18 +240,6 @@ class SimpleMLPAdaLN(nn.Module):
         self.cond_embed = nn.Linear(z_channels, model_channels)
 
         self.input_proj = nn.Linear(in_channels, model_channels)
-
-        # self.input_proj = nn.Sequential(
-        # nn.Linear(in_channels, model_channels),
-        # nn.LayerNorm(model_channels, eps=1e-6)  # <-- ADD THIS
-        # )
-
-        # # Project the condition c and then immediately normalize it.
-        # self.cond_embed = nn.Sequential(
-        #     nn.Linear(z_channels, model_channels),
-        #     nn.LayerNorm(model_channels, eps=1e-6)  # <-- ADD THIS
-        # )
-
 
         res_blocks = []
         for i in range(num_res_blocks):
