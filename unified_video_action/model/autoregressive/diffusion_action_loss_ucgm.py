@@ -96,22 +96,26 @@ class DiffActLossUCGM(nn.Module):
             self.net = SimpleMLPAdaLN(
                 in_channels=target_channels,
                 model_channels=width,
-                out_channels=target_channels,
+                out_channels=target_channels, #only predict noise,使用UCGM统一损失
                 z_channels=z_channels,
                 num_res_blocks=depth,
                 grad_checkpointing=grad_checkpointing,
             )
-        elif diff_model_type == "DiT":
-            from unified_video_action.model.autoregressive.dit import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
+
+        # 【注意】：dit.py文件不存在，分支禁用
+        # elif diff_model_type == "DiT":
+        #     # 注意：dit.py文件不存在，此分支已禁用
+        #     # 请使用 DiT_patches_hybrid 替代
+        #     from unified_video_action.model.autoregressive.dit import DiT
+        #     self.net = DiT(
+        #         in_channels=target_channels,
+        #         hidden_size=width,
+        #         depth=depth,
+        #         z_channels=z_channels,
+        #         num_heads=16,
+        #         mlp_ratio=4.0,
+        #         learn_sigma=False,
+        #     )
         elif diff_model_type == "DiT_hybrid_ca_sa":
             from unified_video_action.model.autoregressive.dit_hybrid_ca_sa import DiT
             #from unified_video_action.model.autoregressive.dit_patches import DiT

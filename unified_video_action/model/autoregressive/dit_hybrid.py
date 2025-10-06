@@ -63,6 +63,7 @@ class DiTPolicyBlock(nn.Module):
         self.g_mlp  = nn.Parameter(torch.zeros(1,1,d_model))
 
         # t → (shift, scale); last layer will be zero-initialized in model init
+        # 将时间步嵌入 t_emb 映射为 shift 和 scale
         self.t2affine = nn.Sequential(
             nn.SiLU(), nn.Linear(d_model, 2*d_model)
         )

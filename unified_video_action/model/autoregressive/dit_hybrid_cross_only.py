@@ -59,20 +59,23 @@ class DiTPolicyBlock(nn.Module):
         )
 
         # AdaLN-Zero gates (residual scalars)
-        self.g_attn = nn.Parameter(torch.zeros(1,1,d_model))
+        self.g_attn = nn.Parameter(torch.zeros(1,1,d_model)) #可学习门控，初始为 0，训练中逐步激活
         self.g_mlp  = nn.Parameter(torch.zeros(1,1,d_model))
 
     def forward(self, x_act, x_cond, attn_mask=None, key_pad_mask=None):
         # x_act: [B, L_act, D]; x_cond: [B, L_cond, D]; t_emb: [B, D]
+
+        # 对动作和条件分别做 LayerNorm，稳定训练
         q = self.ln_q(x_act)
         kv = self.ln_kv(x_cond)
+
         attn_out, _ = self.cross(
             q.to(torch.float32), kv.to(torch.float32), kv.to(torch.float32),
             attn_mask=attn_mask, key_padding_mask=key_pad_mask, need_weights=False
         )
 
         x = x_act + self.g_attn * attn_out
-        x = x + self.g_mlp  * self.mlp(self.ln_mlp(x))
+        x = x + self.g_mlp  * self.mlp(self.ln_mlp(x)) #残差连接 + g_mlp 门控
         return x
 
 
@@ -146,7 +149,7 @@ class DiT(nn.Module):
         # Generic linear/ln init
         def init_linear(m):
             if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
+                nn.init.xavier_uniform_(m.weighforwardt)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
         self.apply(init_linear)
@@ -167,6 +170,7 @@ class DiT(nn.Module):
 
     # ----- Forward -----
     #@torch.autocast(device_type="cuda", enabled=False)  # keep attention math stable if you wrap outer AMP
+    #处理输入/输出、位置编码、时间步嵌入，并串联多个 DiTPolicyBlock
     def forward(
         self,
         x_noisy: torch.Tensor,          # [B, L, action_dim]

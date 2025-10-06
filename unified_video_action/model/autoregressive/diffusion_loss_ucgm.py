@@ -38,10 +38,10 @@ class DiffLossUCGM(nn.Module):
         self.num_sampling_steps = num_sampling_steps
         if num_sampling_steps == "few":
             self.ucgmts = UCGMTS(
-                    transport_type="Linear",
+                    transport_type="Linear",  # 少步采样用Linear,简单稳定，少步不易发散
                     lab_drop_ratio=0.1, # removed these for the other
                     consistc_ratio=1.0, # removed these for the other
-                    scaled_cbl_eps=9.0, # removed these for the other
+                    scaled_cbl_eps=9.0, # 高损失参数
                     ema_decay_rate=0.0,
                     enhanced_range=[0.0, 0.75], # removed these for the other
                     time_dist_ctrl=[0.8, 1.0, 1.0], # removed these for the other
@@ -49,7 +49,7 @@ class DiffLossUCGM(nn.Module):
                 )
         elif num_sampling_steps == "sample_only":
             self.ucgmts = UCGMTS(
-                transport_type="TrigFlow"
+                transport_type="TrigFlow" #质量更好、过渡更平滑
             )
         else:
             self.ucgmts = UCGMTS(
@@ -63,8 +63,10 @@ class DiffLossUCGM(nn.Module):
         z = z.reshape(bsz * seq_len, -1)
         mask = mask.reshape(bsz * seq_len)
 
+        # 直接调用UCGMTS的训练步骤
         loss = self.ucgmts.training_step(model=self.model_fn, x=target, c=z)
-
+        
+        # 掩码处理(保持不变)
         if mask is not None:
             loss = (loss * mask).sum() / mask.sum()
         return loss.mean()
