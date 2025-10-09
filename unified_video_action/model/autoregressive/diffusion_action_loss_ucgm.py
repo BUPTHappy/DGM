@@ -173,6 +173,7 @@ class DiffActLossUCGM(nn.Module):
         )
         self.stochasticity_ratio = ucgmts_config.get("consistc_ratio", 1.0)
         self.rfba_gap_steps = ucgmts_config.get("rfba_gap_steps", [0.001, 0.5])
+        self.extrapol_ratio = ucgmts_config.get("extrapol_ratio", 0.0)
 
         
     def forward(self, target, z, task_mode=None, text_latents=None):
@@ -277,7 +278,7 @@ class DiffActLossUCGM(nn.Module):
                 sampling_model=self.net,
                 sampling_steps=self.num_sampling_steps,
                 stochast_ratio=self.stochasticity_ratio,
-                extrapol_ratio=0,
+                extrapol_ratio=self.extrapol_ratio,  #make it tunable instead of hardcode 0.0
                 sampling_order=1,
                 time_dist_ctrl=[1.17, 0.8, 1.1],
                 rfba_gap_steps=self.rfba_gap_steps,

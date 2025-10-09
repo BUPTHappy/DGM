@@ -38,21 +38,22 @@ policy:
     diffusion_batch_mul: 1
     grad_checkpointing: False
     use_ucgm: True
-    num_sampling_steps: 2
+    num_sampling_steps: 2  #picked
     ucgmts_config:
-      transport_type: "Linear"
-      consistc_ratio: 1.0
+      transport_type: "Linear" 
+      consistc_ratio: 1.0  #picked
       scaled_cbl_eps: 0.0
       ema_decay_rate: 0.0
-      rfba_gap_steps: [0.001, 0.5]  # for 2 steps
+      rfba_gap_steps: [0.001, 0.5]  # for 2 steps (picked)
+      extrapol_ratio: 0.0  #picked
     token_pruning: False
     pruning_ratios: None
     restore_after_encoder: None
     #
     num_iter: 1
-    cfg: 1
+    cfg: 1  #picked
     cfg_schedule: "linear"
-    temperature: 0.95
+    temperature: 0.95  #picked
     predict_video: True
     #
     act_diff_training_steps: 1000

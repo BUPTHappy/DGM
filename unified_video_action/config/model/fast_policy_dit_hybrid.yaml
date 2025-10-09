@@ -45,6 +45,7 @@ policy:
       scaled_cbl_eps: 0.0
       ema_decay_rate: 0.0
       rfba_gap_steps: [0.001, 0.5]  # for 2 steps
+      extrapol_ratio: 0.0
     token_pruning: False
     pruning_ratios: None
     restore_after_encoder: None
