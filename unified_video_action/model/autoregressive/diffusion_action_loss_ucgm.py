@@ -96,26 +96,22 @@ class DiffActLossUCGM(nn.Module):
             self.net = SimpleMLPAdaLN(
                 in_channels=target_channels,
                 model_channels=width,
-                out_channels=target_channels, #only predict noise,使用UCGM统一损失
+                out_channels=target_channels,
                 z_channels=z_channels,
                 num_res_blocks=depth,
                 grad_checkpointing=grad_checkpointing,
             )
-
-        # 【注意】：dit.py文件不存在，分支禁用
-        # elif diff_model_type == "DiT":
-        #     # 注意：dit.py文件不存在，此分支已禁用
-        #     # 请使用 DiT_patches_hybrid 替代
-        #     from unified_video_action.model.autoregressive.dit import DiT
-        #     self.net = DiT(
-        #         in_channels=target_channels,
-        #         hidden_size=width,
-        #         depth=depth,
-        #         z_channels=z_channels,
-        #         num_heads=16,
-        #         mlp_ratio=4.0,
-        #         learn_sigma=False,
-        #     )
+        elif diff_model_type == "DiT":
+            from unified_video_action.model.autoregressive.dit import DiT
+            self.net = DiT(
+                in_channels=target_channels,
+                hidden_size=width,
+                depth=depth,
+                z_channels=z_channels,
+                num_heads=16,
+                mlp_ratio=4.0,
+                learn_sigma=False,
+            )
         elif diff_model_type == "DiT_hybrid_ca_sa":
             from unified_video_action.model.autoregressive.dit_hybrid_ca_sa import DiT
             #from unified_video_action.model.autoregressive.dit_patches import DiT
@@ -173,7 +169,6 @@ class DiffActLossUCGM(nn.Module):
         )
         self.stochasticity_ratio = ucgmts_config.get("consistc_ratio", 1.0)
         self.rfba_gap_steps = ucgmts_config.get("rfba_gap_steps", [0.001, 0.5])
-        self.extrapol_ratio = ucgmts_config.get("extrapol_ratio", 0.0)
 
         
     def forward(self, target, z, task_mode=None, text_latents=None):
@@ -278,7 +273,7 @@ class DiffActLossUCGM(nn.Module):
                 sampling_model=self.net,
                 sampling_steps=self.num_sampling_steps,
                 stochast_ratio=self.stochasticity_ratio,
-                extrapol_ratio=self.extrapol_ratio,  #make it tunable instead of hardcode 0.0
+                extrapol_ratio=0,
                 sampling_order=1,
                 time_dist_ctrl=[1.17, 0.8, 1.1],
                 rfba_gap_steps=self.rfba_gap_steps,

@@ -32,7 +32,6 @@ def mask_by_order(mask_len, order, bsz, seq_len, device):
 class MAR(nn.Module):
     """Masked Autoencoder with VisionTransformer backbone"""
 
-    # 加了token pruning和UCGMTS可选扩散头初始化
     def __init__(
         self,
         img_size=256,
@@ -270,7 +269,6 @@ class MAR(nn.Module):
         self.decoder_norm = norm_layer(decoder_embed_dim)
 
         # ========= Patch transformer layers with ToMe =========
-        # 在 Transformer 层间合并相似 token 以提高效率
         if self.token_pruning:
             self.encoder_blocks.cls_token = None
             tome.patch.timm(self.encoder_blocks, trace_source=True)
@@ -319,7 +317,6 @@ class MAR(nn.Module):
 
         if self.predict_video:
             # ========= Video Diffusion Loss =========
-            # 选择使用带UCGM还是原本的
             self.diffloss = diffloss_options[use_ucgm](
                 target_channels=self.token_embed_dim,
                 z_channels=decoder_embed_dim,
@@ -401,7 +398,6 @@ class MAR(nn.Module):
             else:
                 raise NotImplementedError
 
-    # 不变
     def initialize_weights(self):
         # parameters
         torch.nn.init.normal_(self.fake_latent_x, std=0.02)
@@ -434,7 +430,6 @@ class MAR(nn.Module):
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
 
-    # 不变
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
             # we use xavier_uniform following official JAX ViT:
@@ -447,7 +442,6 @@ class MAR(nn.Module):
             if m.weight is not None:
                 nn.init.constant_(m.weight, 1.0)
 
-    # 不变
     def patchify(self, x):
         bsz, c, h, w = x.shape
         p = self.patch_size
@@ -457,8 +451,7 @@ class MAR(nn.Module):
         x = torch.einsum("nchpwq->nhwcpq", x)
         x = x.reshape(bsz, h_ * w_, c * p**2)
         return x  # [n, l, d]
-    
-    # 不变
+
     def unpatchify(self, x):
         bsz = x.shape[0]
         p = self.patch_size
@@ -470,7 +463,6 @@ class MAR(nn.Module):
         x = x.reshape(bsz, c, h_ * p, w_ * p)
         return x  # [n, c, h, w]
 
-    # 不变
     def sample_orders(self, bsz):
         # generate a batch of random generation orders
         orders = []
@@ -481,7 +473,6 @@ class MAR(nn.Module):
         orders = torch.Tensor(np.array(orders)).to(self.device).long()
         return orders
 
-    # 不变
     def random_masking(self, x, orders):
         # generate token mask
         bsz, t, seq_len, embed_dim = x.shape
@@ -751,7 +742,6 @@ class MAR(nn.Module):
             combined_pos_embed = decoder_combined_pos_embed
 
         # ========= Token Restoration =========
-        # 在 token 修剪后，恢复原始的 token 顺序
         if self.token_pruning:
             if self.restore_after_encoder:
                 x = self.restore_tokens_tome(x, enc_only=True)

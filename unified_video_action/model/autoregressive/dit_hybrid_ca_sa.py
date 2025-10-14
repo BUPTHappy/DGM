@@ -97,7 +97,7 @@ class DiT(nn.Module):
 
         # Stack of blocks
         self.blocks = nn.ModuleList([
-            nn.TransformerDecoderLayer(d_model=self.d_model, nhead=self.nhead, dim_feedforward=int(self.d_model * self.mlp_ratio), batch_first=True) #直接使用 PyTorch 内置的 TransformerDecoderLayer
+            nn.TransformerDecoderLayer(d_model=self.d_model, nhead=self.nhead, dim_feedforward=int(self.d_model * self.mlp_ratio), batch_first=True)
             for _ in range(self.n_layers)
         ])
 

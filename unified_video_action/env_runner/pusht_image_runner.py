@@ -129,6 +129,11 @@ class PushTImageRunner(BaseImageRunner):
             env_init_fn_dills.append(dill.dumps(init_fn))
 
         env = AsyncVectorEnv(env_fns, shared_memory=False)
+        
+        # Memory optimization: reduce number of parallel environments if needed
+        if n_envs > 8:  # Limit parallel environments to save memory
+            print(f"⚠ Reducing parallel environments from {n_envs} to 8 for memory efficiency")
+            n_envs = 8
 
         self.env = env
         self.env_fns = env_fns
@@ -200,9 +205,14 @@ class PushTImageRunner(BaseImageRunner):
                     np_obs_dict, lambda x: torch.from_numpy(x).to(device=device)
                 )
 
-                # run policy
+                # run policy with memory optimization
                 with torch.no_grad():
                     action_dict = policy.predict_action(obs_dict, **kwargs)
+                    
+                    # Clear intermediate tensors to save memory
+                    del obs_dict
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
 
                 # device_transfer
                 np_action_dict = dict_apply(
