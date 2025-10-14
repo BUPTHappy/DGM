@@ -40,8 +40,36 @@ from types import SimpleNamespace
     show_default=True,
     help="Stochasticity rate for sampling."
 )
+@click.option(
+    "--cfg_strength",
+    type=float,
+    default=None,
+    show_default=True,
+    help="Classifier-free guidance strength."
+)
+@click.option(
+    "--temperature",
+    type=float,
+    default=None,
+    show_default=True,
+    help="Sampling temperature."
+)
+@click.option(
+    "--rfba_gap_end",
+    type=float,
+    default=None,
+    show_default=True,
+    help="RFBA gap end value."
+)
+@click.option(
+    "--extrapol_ratio",
+    type=float,
+    default=None,
+    show_default=True,
+    help="Extrapolation ratio."
+)
 def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, 
-         num_sampling_steps, stochasticity_rate):
+         num_sampling_steps, stochasticity_rate, cfg_strength, temperature, rfba_gap_end, extrapol_ratio):
 
     # Safe memory optimization settings
     os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:512,garbage_collection_threshold:0.5"
@@ -89,6 +117,16 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm,
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5] 
             else:
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
+        
+        # Apply Bayesian optimization parameters
+        if cfg_strength is not None:
+            cfg.model.policy.autoregressive_model_params.cfg = cfg_strength
+        if temperature is not None:
+            cfg.model.policy.autoregressive_model_params.temperature = temperature
+        if rfba_gap_end is not None:
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, rfba_gap_end]
+        if extrapol_ratio is not None:
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = extrapol_ratio
     
     if use_ucgm:
         OmegaConf.set_struct(cfg, False)
