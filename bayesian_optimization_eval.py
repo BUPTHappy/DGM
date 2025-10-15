@@ -35,6 +35,10 @@ def evaluate_model_with_params(params: Dict[str, Any],
             cfg.model.policy.autoregressive_model_params.cfg = params['cfg']
             cfg.model.policy.autoregressive_model_params.temperature = params['temperature']
             
+            # 新增的local attention参数
+            cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
+            cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
+            
             cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
             cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
             cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
@@ -59,7 +63,9 @@ def evaluate_model_with_params(params: Dict[str, Any],
             "--device", device,
             "--use_ucgm",
             "--num_sampling_steps", str(params['num_sampling_steps']),
-            "--stochasticity_rate", str(params['consistc_ratio'])
+            "--stochasticity_rate", str(params['consistc_ratio']),
+            "--window_size", str(params['window_size']),
+            "--lambda_local", str(params['lambda_local'])
         ]
         
         env = os.environ.copy()

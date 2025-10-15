@@ -41,7 +41,21 @@ from types import SimpleNamespace
     show_default=True,
     help="Stochasticity rate for sampling."
 )
-def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate):
+@click.option(
+    "--window_size",
+    type=int,
+    default=None,
+    show_default=True,
+    help="Window size for local causal attention."
+)
+@click.option(
+    "--lambda_local",
+    type=float,
+    default=None,
+    show_default=True,
+    help="Lambda parameter for local feature fusion."
+)
+def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
 
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -70,6 +84,12 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_samp
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5] 
             else:
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
+        
+        # 处理local attention参数
+        if window_size is not None:
+            cfg.model.policy.autoregressive_model_params.window_size = window_size
+        if lambda_local is not None:
+            cfg.model.policy.autoregressive_model_params.lambda_local = lambda_local
     
         
 

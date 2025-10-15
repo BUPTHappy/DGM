@@ -150,6 +150,8 @@ class MAR(nn.Module):
         action_model_params={},
         use_ucgm=False,
         ucgmts_config={},
+        window_size=15,
+        lambda_local=0.1,
         **kwargs,
     ):
         super().__init__()
@@ -326,7 +328,7 @@ class MAR(nn.Module):
                     norm_layer=norm_layer,
                     proj_drop=proj_dropout,
                     attn_drop=attn_dropout,
-                    window_size=15,  
+                    window_size=window_size,  
                 )
                 for _ in range(encoder_depth)
             ]
@@ -337,7 +339,7 @@ class MAR(nn.Module):
         self.feature_fusion = nn.Linear(encoder_embed_dim * 2, encoder_embed_dim)
         
         # 使用简单的λ参数控制特征融合权重，避免训练门控网络
-        self.lambda_local = 0.1 
+        self.lambda_local = lambda_local 
 
         # ========= Decoder =========
         self.decoder_embed = nn.Linear(encoder_embed_dim, decoder_embed_dim, bias=True)

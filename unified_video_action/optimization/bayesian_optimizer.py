@@ -15,7 +15,10 @@ class UCGMBayesianOptimizer:
             'temperature': trial.suggest_float('temperature', 0.7, 1.2), #0.95
             'num_sampling_steps': trial.suggest_categorical('num_sampling_steps', [1, 2, 3]), # 当前值：2
             'cfg': trial.suggest_float('cfg', 0.8, 1.5), # 当前值：1
-            'extrapol_ratio': trial.suggest_float('extrapol_ratio', 0.0, 0.6) # 当前值：0.0 (加速采样)
+            'extrapol_ratio': trial.suggest_float('extrapol_ratio', 0.0, 0.6), # 当前值：0.0 (加速采样)
+            # 新增的local attention参数
+            'window_size': trial.suggest_int('window_size', 0, 25), # 当前值：15
+            'lambda_local': trial.suggest_float('lambda_local', 0.01, 0.8) # 当前值：0.1
         }
         
         params['ucgmts_config'] = {
