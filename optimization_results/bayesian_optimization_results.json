@@ -1,0 +1,676 @@
+{
+  "best_params": {
+    "consistc_ratio": 0.6185208484961278,
+    "rfba_gap_end": 0.38586243414392163,
+    "temperature": 1.1957275351037797,
+    "num_sampling_steps": 3,
+    "cfg": 1.1956161328603658,
+    "extrapol_ratio": 0.5998158952704195,
+    "window_size": 3,
+    "lambda_local": 0.019342786908628708,
+    "ucgmts_config": {
+      "transport_type": "Linear",
+      "consistc_ratio": 0.6185208484961278,
+      "scaled_cbl_eps": 0.0,
+      "ema_decay_rate": 0.0,
+      "rfba_gap_steps": [
+        0.001,
+        0.38586243414392163
+      ],
+      "extrapol_ratio": 0.5998158952704195
+    }
+  },
+  "best_score": 0.9952977559369997,
+  "all_trials": [
+    {
+      "params": {
+        "consistc_ratio": 0.7138694262355179,
+        "rfba_gap_end": 0.27982333629142464,
+        "temperature": 1.1268729015083367,
+        "num_sampling_steps": 3,
+        "cfg": 1.015960232193795,
+        "extrapol_ratio": 0.1503173818186964,
+        "window_size": 9,
+        "lambda_local": 0.21909683585451756
+      },
+      "value": 0.9837447463775436
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.9645802783355694,
+        "rfba_gap_end": 0.279495168947976,
+        "temperature": 1.0521315235228355,
+        "num_sampling_steps": 3,
+        "cfg": 1.0789043323330416,
+        "extrapol_ratio": 0.10924414881744789,
+        "window_size": 1,
+        "lambda_local": 0.7218050677810607
+      },
+      "value": 0.9746805066414563
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7704426115046967,
+        "rfba_gap_end": 0.3671628355645803,
+        "temperature": 0.7144899995050705,
+        "num_sampling_steps": 3,
+        "cfg": 0.8701490885692358,
+        "extrapol_ratio": 0.5200328158754857,
+        "window_size": 0,
+        "lambda_local": 0.5645179352474129
+      },
+      "value": 0.994236879067943
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.8400828687324488,
+        "rfba_gap_end": 0.5977737365594549,
+        "temperature": 0.7069796904830414,
+        "num_sampling_steps": 2,
+        "cfg": 1.1503971669362896,
+        "extrapol_ratio": 0.3971066691414609,
+        "window_size": 25,
+        "lambda_local": 0.39878308639770477
+      },
+      "value": 0.9535090097996681
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.8770323834668907,
+        "rfba_gap_end": 0.6454588556105229,
+        "temperature": 1.0583081018281777,
+        "num_sampling_steps": 1,
+        "cfg": 1.357539566253108,
+        "extrapol_ratio": 0.07333107280418746,
+        "window_size": 19,
+        "lambda_local": 0.28194039681985694
+      },
+      "value": 0.965089846653006
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.8893042244413338,
+        "rfba_gap_end": 0.16736681864131492,
+        "temperature": 0.9099022829953733,
+        "num_sampling_steps": 3,
+        "cfg": 0.827730706361695,
+        "extrapol_ratio": 0.4442541820889765,
+        "window_size": 15,
+        "lambda_local": 0.7845637819256018
+      },
+      "value": 0.9591696917481065
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.9229210375399086,
+        "rfba_gap_end": 0.7342979719869299,
+        "temperature": 1.0992831512946886,
+        "num_sampling_steps": 3,
+        "cfg": 0.8101667313605988,
+        "extrapol_ratio": 0.46220862797036555,
+        "window_size": 19,
+        "lambda_local": 0.3448030778383122
+      },
+      "value": 0.9723173947280934
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.5112765371138952,
+        "rfba_gap_end": 0.3788061034683412,
+        "temperature": 1.0183329724353467,
+        "num_sampling_steps": 3,
+        "cfg": 0.8194140287532925,
+        "extrapol_ratio": 0.23616325248266434,
+        "window_size": 10,
+        "lambda_local": 0.6110270102197287
+      },
+      "value": 0.9717763150421953
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.9232207153904788,
+        "rfba_gap_end": 0.6534592644322177,
+        "temperature": 0.9063326982261153,
+        "num_sampling_steps": 2,
+        "cfg": 0.8960128666094836,
+        "extrapol_ratio": 0.3147936681864849,
+        "window_size": 9,
+        "lambda_local": 0.23162937509465198
+      },
+      "value": 0.9286902810407094
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.9202294783217743,
+        "rfba_gap_end": 0.5490487947215201,
+        "temperature": 1.0343842390001492,
+        "num_sampling_steps": 1,
+        "cfg": 0.9151503573842243,
+        "extrapol_ratio": 0.4685242171613451,
+        "window_size": 11,
+        "lambda_local": 0.20105827587067118
+      },
+      "value": 0.9650898466530061
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6912573109167421,
+        "rfba_gap_end": 0.4893174700450303,
+        "temperature": 0.7386548928388105,
+        "num_sampling_steps": 2,
+        "cfg": 1.328446891938874,
+        "extrapol_ratio": 0.3237555777779506,
+        "window_size": 0,
+        "lambda_local": 0.5403165799368624
+      },
+      "value": 0.9524525470153319
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7086941125402406,
+        "rfba_gap_end": 0.3317094536996476,
+        "temperature": 1.196828577029029,
+        "num_sampling_steps": 3,
+        "cfg": 1.0608108274364578,
+        "extrapol_ratio": 0.5966748715373574,
+        "window_size": 4,
+        "lambda_local": 0.04428974298970567
+      },
+      "value": 0.9908017304878802
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6185208484961278,
+        "rfba_gap_end": 0.38586243414392163,
+        "temperature": 1.1957275351037797,
+        "num_sampling_steps": 3,
+        "cfg": 1.1956161328603658,
+        "extrapol_ratio": 0.5998158952704195,
+        "window_size": 3,
+        "lambda_local": 0.019342786908628708
+      },
+      "value": 0.9952977559369997
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6048177269584681,
+        "rfba_gap_end": 0.4243715406718917,
+        "temperature": 0.7975990566510571,
+        "num_sampling_steps": 3,
+        "cfg": 1.2388006512210983,
+        "extrapol_ratio": 0.5736532595862343,
+        "window_size": 5,
+        "lambda_local": 0.5074524187348526
+      },
+      "value": 0.9697444873587335
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7916638163438925,
+        "rfba_gap_end": 0.12739715448118977,
+        "temperature": 0.8492033011197895,
+        "num_sampling_steps": 3,
+        "cfg": 1.46719084404141,
+        "extrapol_ratio": 0.541471850548341,
+        "window_size": 5,
+        "lambda_local": 0.06467274978183996
+      },
+      "value": 0.9810610444211316
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6235556364681987,
+        "rfba_gap_end": 0.45718297333317454,
+        "temperature": 0.9642200112894446,
+        "num_sampling_steps": 1,
+        "cfg": 1.2005112177458197,
+        "extrapol_ratio": 0.5095734199269777,
+        "window_size": 2,
+        "lambda_local": 0.637834643928621
+      },
+      "value": 0.965089846653006
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6352963105235652,
+        "rfba_gap_end": 0.22598726029644867,
+        "temperature": 1.1946391034369688,
+        "num_sampling_steps": 3,
+        "cfg": 0.9826815375321043,
+        "extrapol_ratio": 0.38824817296364195,
+        "window_size": 6,
+        "lambda_local": 0.4563111111871623
+      },
+      "value": 0.9890301433889599
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7830128540394432,
+        "rfba_gap_end": 0.3775598828754021,
+        "temperature": 0.8006211754151943,
+        "num_sampling_steps": 3,
+        "cfg": 1.3175820171429415,
+        "extrapol_ratio": 0.5997052798744051,
+        "window_size": 0,
+        "lambda_local": 0.10621771689161202
+      },
+      "value": 0.9885287665581092
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.5521803628642921,
+        "rfba_gap_end": 0.5127983192433906,
+        "temperature": 0.9639969948966716,
+        "num_sampling_steps": 1,
+        "cfg": 1.1024651307674318,
+        "extrapol_ratio": 0.24258828821088935,
+        "window_size": 14,
+        "lambda_local": 0.6020411054553112
+      },
+      "value": 0.9650898466530061
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6591211583434724,
+        "rfba_gap_end": 0.2315561733824657,
+        "temperature": 1.1415110674227171,
+        "num_sampling_steps": 2,
+        "cfg": 1.246131625813444,
+        "extrapol_ratio": 0.508652065675816,
+        "window_size": 7,
+        "lambda_local": 0.12915916919683884
+      },
+      "value": 0.9501716724010417
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7522565933882303,
+        "rfba_gap_end": 0.39277920204341976,
+        "temperature": 0.8693129518080343,
+        "num_sampling_steps": 3,
+        "cfg": 1.4244368354132484,
+        "extrapol_ratio": 0.38226858053193036,
+        "window_size": 2,
+        "lambda_local": 0.35498935189430303
+      },
+      "value": 0.9918833479674325
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7637953909500765,
+        "rfba_gap_end": 0.38820763544938663,
+        "temperature": 0.7782903403893152,
+        "num_sampling_steps": 3,
+        "cfg": 1.495928401288106,
+        "extrapol_ratio": 0.38854281526168877,
+        "window_size": 3,
+        "lambda_local": 0.3451286414622485
+      },
+      "value": 0.9922252937905265
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.8190034872691516,
+        "rfba_gap_end": 0.3289300010308014,
+        "temperature": 0.73483427730184,
+        "num_sampling_steps": 3,
+        "cfg": 1.4840530857685252,
+        "extrapol_ratio": 0.536419430176558,
+        "window_size": 4,
+        "lambda_local": 0.47070631480456804
+      },
+      "value": 0.955759160567214
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.5721640935804129,
+        "rfba_gap_end": 0.4443936819684327,
+        "temperature": 0.7821315217716381,
+        "num_sampling_steps": 3,
+        "cfg": 0.947156421416169,
+        "extrapol_ratio": 0.45637119895391015,
+        "window_size": 3,
+        "lambda_local": 0.6843857192981625
+      },
+      "value": 0.9666768521485113
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7448146794562056,
+        "rfba_gap_end": 0.3164108133463088,
+        "temperature": 0.7017712612141631,
+        "num_sampling_steps": 3,
+        "cfg": 1.390224592681743,
+        "extrapol_ratio": 0.016212476372232165,
+        "window_size": 7,
+        "lambda_local": 0.5642747490506406
+      },
+      "value": 0.9719056195311411
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6746974745749411,
+        "rfba_gap_end": 0.5467111953800821,
+        "temperature": 0.7655284366291222,
+        "num_sampling_steps": 3,
+        "cfg": 1.273385421522205,
+        "extrapol_ratio": 0.5427489138855079,
+        "window_size": 0,
+        "lambda_local": 0.3181036181441165
+      },
+      "value": 0.9894957511557385
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7452458470437402,
+        "rfba_gap_end": 0.22494633034725622,
+        "temperature": 0.8495069627590681,
+        "num_sampling_steps": 3,
+        "cfg": 1.1529807856803673,
+        "extrapol_ratio": 0.40794958152403626,
+        "window_size": 3,
+        "lambda_local": 0.4265397092255648
+      },
+      "value": 0.9770503187610864
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.8293977472554448,
+        "rfba_gap_end": 0.41365937749050824,
+        "temperature": 0.8158673750731255,
+        "num_sampling_steps": 3,
+        "cfg": 1.0223458422019946,
+        "extrapol_ratio": 0.26468022748078324,
+        "window_size": 7,
+        "lambda_local": 0.011880834107036886
+      },
+      "value": 0.9518479401819804
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7823767368424047,
+        "rfba_gap_end": 0.791890202734562,
+        "temperature": 0.752853984397097,
+        "num_sampling_steps": 1,
+        "cfg": 0.873914452992339,
+        "extrapol_ratio": 0.49377469030735405,
+        "window_size": 12,
+        "lambda_local": 0.16277738390104257
+      },
+      "value": 0.965089846653006
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7169803170842124,
+        "rfba_gap_end": 0.2894855955169732,
+        "temperature": 0.9090284706478242,
+        "num_sampling_steps": 2,
+        "cfg": 1.1911091103752547,
+        "extrapol_ratio": 0.1627320629746333,
+        "window_size": 9,
+        "lambda_local": 0.28320256448424885
+      },
+      "value": 0.951209552210294
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.5188373616594502,
+        "rfba_gap_end": 0.35507671376734473,
+        "temperature": 0.9909059466759927,
+        "num_sampling_steps": 3,
+        "cfg": 1.0349920588750696,
+        "extrapol_ratio": 0.3504377061629379,
+        "window_size": 2,
+        "lambda_local": 0.39204732334133796
+      },
+      "value": 0.9650826227936676
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.727906132376821,
+        "rfba_gap_end": 0.38462998160543543,
+        "temperature": 0.8500750150323038,
+        "num_sampling_steps": 3,
+        "cfg": 1.4223024022562514,
+        "extrapol_ratio": 0.36885927571295707,
+        "window_size": 2,
+        "lambda_local": 0.35682253670613956
+      },
+      "value": 0.9946461873124729
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7186825768308585,
+        "rfba_gap_end": 0.2743381065138532,
+        "temperature": 0.8273050405115395,
+        "num_sampling_steps": 3,
+        "cfg": 1.4361925131522526,
+        "extrapol_ratio": 0.4330805751854241,
+        "window_size": 1,
+        "lambda_local": 0.22659673104434397
+      },
+      "value": 0.9896082936349013
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6532430102699205,
+        "rfba_gap_end": 0.4790430917868485,
+        "temperature": 0.7184124161677574,
+        "num_sampling_steps": 3,
+        "cfg": 1.3857142670299074,
+        "extrapol_ratio": 0.3460711284960959,
+        "window_size": 4,
+        "lambda_local": 0.503173759291522
+      },
+      "value": 0.9894835125403358
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.590315762627959,
+        "rfba_gap_end": 0.41832238334307437,
+        "temperature": 0.7695246112807407,
+        "num_sampling_steps": 3,
+        "cfg": 1.4919120652695563,
+        "extrapol_ratio": 0.5650694205900011,
+        "window_size": 1,
+        "lambda_local": 0.7330795252574185
+      },
+      "value": 0.9831933120930126
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.8643278163261154,
+        "rfba_gap_end": 0.2743297649939446,
+        "temperature": 0.8864210010042365,
+        "num_sampling_steps": 3,
+        "cfg": 1.4410696524884297,
+        "extrapol_ratio": 0.19526599924651739,
+        "window_size": 22,
+        "lambda_local": 0.39307897119817137
+      },
+      "value": 0.9851984748914632
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.8058313708969567,
+        "rfba_gap_end": 0.3587604154947347,
+        "temperature": 1.0954940238263187,
+        "num_sampling_steps": 3,
+        "cfg": 1.1254193847852758,
+        "extrapol_ratio": 0.2899121278198349,
+        "window_size": 6,
+        "lambda_local": 0.2695108090030025
+      },
+      "value": 0.9553137746797892
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7631266714628425,
+        "rfba_gap_end": 0.5155927546745648,
+        "temperature": 0.7313598460420311,
+        "num_sampling_steps": 3,
+        "cfg": 1.3000385006750168,
+        "extrapol_ratio": 0.41877170100633415,
+        "window_size": 16,
+        "lambda_local": 0.323795346795645
+      },
+      "value": 0.9771878678049
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.848652486960497,
+        "rfba_gap_end": 0.59621573912302,
+        "temperature": 0.9290292336541779,
+        "num_sampling_steps": 2,
+        "cfg": 1.3877903293998535,
+        "extrapol_ratio": 0.4944464272591498,
+        "window_size": 3,
+        "lambda_local": 0.7933460006523902
+      },
+      "value": 0.9522442373294575
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6908282678125782,
+        "rfba_gap_end": 0.1784289560609691,
+        "temperature": 0.830296556612421,
+        "num_sampling_steps": 1,
+        "cfg": 0.9798471988983584,
+        "extrapol_ratio": 0.3679345870797628,
+        "window_size": 9,
+        "lambda_local": 0.17789861925294861
+      },
+      "value": 0.965089846653006
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.9982173133059054,
+        "rfba_gap_end": 0.30306126924195076,
+        "temperature": 0.7933106406906959,
+        "num_sampling_steps": 3,
+        "cfg": 1.3388237898564044,
+        "extrapol_ratio": 0.46879041854653825,
+        "window_size": 0,
+        "lambda_local": 0.6690191847926578
+      },
+      "value": 0.9555806833895073
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7440767183969125,
+        "rfba_gap_end": 0.39325746625095725,
+        "temperature": 0.8659101058615876,
+        "num_sampling_steps": 3,
+        "cfg": 1.4234023841343848,
+        "extrapol_ratio": 0.3899247711340703,
+        "window_size": 2,
+        "lambda_local": 0.38426843624099016
+      },
+      "value": 0.9681246070444363
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7593544181286398,
+        "rfba_gap_end": 0.3934273638000327,
+        "temperature": 0.7538999774765341,
+        "num_sampling_steps": 3,
+        "cfg": 1.3627594073777776,
+        "extrapol_ratio": 0.2907362211846755,
+        "window_size": 2,
+        "lambda_local": 0.3579776334324127
+      },
+      "value": 0.985832700834731
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7264727240813453,
+        "rfba_gap_end": 0.3532499103422573,
+        "temperature": 0.8883285832830297,
+        "num_sampling_steps": 3,
+        "cfg": 1.4435385162093544,
+        "extrapol_ratio": 0.3689146377510252,
+        "window_size": 1,
+        "lambda_local": 0.433732083094251
+      },
+      "value": 0.9928845483945709
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7173240578309071,
+        "rfba_gap_end": 0.34387569224067815,
+        "temperature": 0.936580575634288,
+        "num_sampling_steps": 3,
+        "cfg": 1.4558363491595283,
+        "extrapol_ratio": 0.3399866289916279,
+        "window_size": 5,
+        "lambda_local": 0.5610131752645422
+      },
+      "value": 0.9894882336588176
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.886735438863463,
+        "rfba_gap_end": 0.4514324596538541,
+        "temperature": 0.8957583271296944,
+        "num_sampling_steps": 3,
+        "cfg": 1.499990659187153,
+        "extrapol_ratio": 0.42478250260313927,
+        "window_size": 25,
+        "lambda_local": 0.4349735934551246
+      },
+      "value": 0.9712692633275618
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6879696788907728,
+        "rfba_gap_end": 0.3640639580746422,
+        "temperature": 1.1707873586072213,
+        "num_sampling_steps": 3,
+        "cfg": 0.8667880613045353,
+        "extrapol_ratio": 0.5744425351365232,
+        "window_size": 1,
+        "lambda_local": 0.503904001144784
+      },
+      "value": 0.9943214425911774
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6239151560953164,
+        "rfba_gap_end": 0.24282285746916832,
+        "temperature": 1.1338423415175212,
+        "num_sampling_steps": 2,
+        "cfg": 0.835331949625739,
+        "extrapol_ratio": 0.5750479096714317,
+        "window_size": 0,
+        "lambda_local": 0.521272848158646
+      },
+      "value": 0.9763046529274633
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.6786167539030886,
+        "rfba_gap_end": 0.3570938783638884,
+        "temperature": 1.1508219378200772,
+        "num_sampling_steps": 3,
+        "cfg": 0.8793746814026326,
+        "extrapol_ratio": 0.5312042147762404,
+        "window_size": 1,
+        "lambda_local": 0.47771155857910225
+      },
+      "value": 0.9920089657020035
+    },
+    {
+      "params": {
+        "consistc_ratio": 0.7011552844195219,
+        "rfba_gap_end": 0.4322734412213453,
+        "temperature": 1.1785412178127064,
+        "num_sampling_steps": 1,
+        "cfg": 0.8432846536222249,
+        "extrapol_ratio": 0.5637255377360544,
+        "window_size": 1,
+        "lambda_local": 0.5832916299515303
+      },
+      "value": 0.965089846653006
+    }
+  ]
+}
