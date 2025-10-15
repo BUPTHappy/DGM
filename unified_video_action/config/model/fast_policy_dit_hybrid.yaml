@@ -41,19 +41,18 @@ policy:
     num_sampling_steps: 2
     ucgmts_config:
       transport_type: "Linear"
-      consistc_ratio: 0.9071378388729745
+      consistc_ratio: 1.0
       scaled_cbl_eps: 0.0
       ema_decay_rate: 0.0
-      rfba_gap_steps: [0.001, 0.11025539924073213]  # optimized
-      extrapol_ratio: 0.4906218467154366
+      rfba_gap_steps: [0.001, 0.5]  # for 2 steps
     token_pruning: False
     pruning_ratios: None
     restore_after_encoder: None
     #
     num_iter: 1
-    cfg: 0.8526154073705436
+    cfg: 1
     cfg_schedule: "linear"
-    temperature: 0.9752329690447294
+    temperature: 0.95
     predict_video: True
     #
     act_diff_training_steps: 1000

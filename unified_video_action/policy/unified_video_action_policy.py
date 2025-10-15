@@ -292,11 +292,11 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
         if self.use_proprioception:
             if "second_image" in proprioception_input:
                 second_image_z, _ = extract_latent_autoregressive(
-                    self.vae_model, proprioception_input["second_image"], chunk_size=2
+                    self.vae_model, proprioception_input["second_image"]
                 )
                 proprioception_input["second_image_z"] = second_image_z
 
-        c, latent_size = extract_latent_autoregressive(self.vae_model, c.detach(), chunk_size=2)
+        c, latent_size = extract_latent_autoregressive(self.vae_model, c.detach())
 
         z, act_out = self.model.sample_tokens(
             bsz=B,

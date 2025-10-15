@@ -388,52 +388,13 @@ def get_trajectory(nactions, T, shift_action, use_history_action=False):
     return history_trajectory, trajectory
 
 
-def extract_latent_autoregressive(vae_model, x, chunk_size=2):
-    """
-    Extract latent representations with chunked processing to reduce memory usage.
-    
-    Args:
-        vae_model: VAE model for encoding
-        x: Input tensor of shape (B, C, T, H, W)
-        chunk_size: Number of frames to process at once (default: 2)
-    
-    Returns:
-        z: Latent tensor of shape (B, T, C, H, W)
-        latent_size: Size of latent dimensions
-    """
+def extract_latent_autoregressive(vae_model, x):
     x = x.float()
     B, C, T, H, W = x.size()
-    
-    # If T is small enough, process normally
-    if T <= chunk_size:
-        with torch.no_grad():
-            posterior = vae_model.encode(rearrange(x, "b c t h w -> (b t) c h w"))
-            z = posterior.sample().mul_(0.2325)
-            z = rearrange(z, "(b t) c h w -> b t c h w", b=B)
-        latent_size = z.size()[2:]
-        return z, latent_size
-    
-    # Process in chunks to save memory
-    z_chunks = []
     with torch.no_grad():
-        for t_start in range(0, T, chunk_size):
-            t_end = min(t_start + chunk_size, T)
-            x_chunk = x[:, :, t_start:t_end, :, :]  # (B, C, chunk_size, H, W)
-            
-            # Process chunk
-            posterior = vae_model.encode(rearrange(x_chunk, "b c t h w -> (b t) c h w"))
-            z_chunk = posterior.sample().mul_(0.2325)
-            z_chunk = rearrange(z_chunk, "(b t) c h w -> b t c h w", b=B)
-            z_chunks.append(z_chunk.cpu())  # Move to CPU immediately
-            
-            # Clear GPU memory aggressively
-            del posterior, z_chunk, x_chunk
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-    
-    # Concatenate chunks along time dimension and move back to GPU
-    z = torch.cat(z_chunks, dim=1)  # (B, T, C, H, W)
-    z = z.to(x.device)  # Move back to original device
+        posterior = vae_model.encode(rearrange(x, "b c t h w -> (b t) c h w"))
+        z = posterior.sample().mul_(0.2325)
+        z = rearrange(z, "(b t) c h w -> b t c h w", b=B)
     latent_size = z.size()[2:]
     return z, latent_size
 
