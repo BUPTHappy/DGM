@@ -107,7 +107,12 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_samp
 
     print("Loaded checkpoint from %s" % checkpoint)
 
-    workspace.load_payload_new(payload, exclude_keys=None, include_keys=None)
+    workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, strict=False)
+    
+    # Re-copy encoder parameters to local causal encoder blocks after loading checkpoint
+    if hasattr(workspace.model, 'model') and hasattr(workspace.model.model, 'copy_encoder_parameters'):
+        workspace.model.model.copy_encoder_parameters()
+        print("Re-copied encoder parameters to local causal encoder blocks")
 
     # get policy from workspace
     if cfg.training.use_ema:
