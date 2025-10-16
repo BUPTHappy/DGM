@@ -137,7 +137,7 @@ Download the checkpoints from [ here for PushT](https://drive.google.com/file/d/
 ```
  yes n | accelerate launch --num_processes=4 train.py \
     --config-dir=. \
-    --config-name=pusht_MLP.yaml \
+    --config-name=pusht_DiT_hybrid.yaml \
     model.policy.selected_training_mode=policy_model \  
     logging.project=pusht_MLP \
     hydra.run.dir="checkpoints/pusht"
