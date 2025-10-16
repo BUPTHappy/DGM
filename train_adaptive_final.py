@@ -14,6 +14,8 @@ import copy
 import subprocess
 import tempfile
 import glob
+import numpy as np
+import random
 from typing import Dict, Any, Optional
 from omegaconf import OmegaConf, open_dict
 import hydra
@@ -344,6 +346,11 @@ def main(cfg: OmegaConf):
             workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=False)
         else:
             workspace.load_payload_new(payload, exclude_keys=['ema_model'], include_keys=None, diffhead_finetuning=True, strict=False)
+        
+        # Re-copy encoder parameters to local causal encoder blocks after loading checkpoint
+        if hasattr(workspace.model, 'model') and hasattr(workspace.model.model, 'copy_encoder_parameters'):
+            workspace.model.model.copy_encoder_parameters()
+            print("Re-copied encoder parameters to local causal encoder blocks")
 
     if cfg.freeze_submodules:
         workspace.freeze_submodules(action_only=True)
@@ -437,6 +444,11 @@ def main(cfg: OmegaConf):
         )
         
         device = workspace.model.device
+        
+        # Re-copy encoder parameters to local causal encoder blocks after accelerator.prepare
+        if hasattr(workspace.model, 'model') and hasattr(workspace.model.model, 'copy_encoder_parameters'):
+            workspace.model.model.copy_encoder_parameters()
+            print("Re-copied encoder parameters to local causal encoder blocks after accelerator.prepare")
         
         if ema_model is not None:
             ema_model.to(device)
