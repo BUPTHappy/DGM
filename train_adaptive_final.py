@@ -20,8 +20,18 @@ from typing import Dict, Any, Optional
 from omegaconf import OmegaConf, open_dict
 import hydra
 import pathlib
+import tqdm
+from torch.utils.data import DataLoader
+from accelerate import Accelerator
+from accelerate.utils import DeepSpeedPlugin
 from unified_video_action.workspace.base_workspace import BaseWorkspace
 from unified_video_action.optimization.bayesian_optimizer import UCGMBayesianOptimizer
+from unified_video_action.model.autoregressive.ema_model import EMAModel
+from unified_video_action.model.common.lr_scheduler import get_scheduler
+from unified_video_action.common.checkpoint_util import TopKCheckpointManager
+from unified_video_action.common.pytorch_util import dict_apply
+from unified_video_action.utils.load_env import load_env_runner
+from unified_video_action.utils.data_utils import resize_image
 
 # allows arbitrary python code execution in configs using the ${eval:''} resolver
 OmegaConf.register_new_resolver("eval", eval, replace=True)
@@ -84,9 +94,9 @@ class AdaptiveTrainer:
             if hasattr(workspace.model, 'module'):
                 # 如果被accelerator包装了，通过module访问原始模型
                 original_model = workspace.model.module
-                print("✅ Detected accelerator-wrapped model, accessing via .module")
+                print("Detected accelerator-wrapped model, accessing via .module")
             else:
-                print("ℹ️  Model not wrapped by accelerator")
+                print("Model not wrapped by accelerator")
             
             # 更新模型中的超参数
             if hasattr(original_model, 'model') and hasattr(original_model.model, 'diffactloss'):
@@ -161,25 +171,14 @@ class AdaptiveTrainer:
     
     def should_optimize(self, epoch: int) -> bool:
         """判断是否应该进行优化"""
-        # 前150个epoch正常训练，之后每隔20个epoch优化一次
-        if epoch < 150:
-            return False
-        
+        # 测试模式：第一次就进行优化
         optimization_schedule = {
-            150: True,   # 第一次优化
-            170: True,   # 每20个epoch优化一次
-            190: True,
-            210: True,
-            230: True,
-            250: True,
-            270: True,
-            290: True,
-            310: True,
-            330: True,
-            350: True,
-            370: True,
-            390: True,
-            400: True   # 最终优化
+            5: True,     # 测试：第5个epoch就优化
+            10: True,    # 测试：第10个epoch再优化一次
+            20: True,    # 测试：第20个epoch再优化一次
+            30: True,    # 测试：第30个epoch再优化一次
+            40: True,    # 测试：第40个epoch再优化一次
+            50: True,    # 测试：第50个epoch再优化一次
         }
         return optimization_schedule.get(epoch, False)
     
@@ -330,7 +329,7 @@ def main(cfg: OmegaConf):
         cfg.val_dataloader.batch_size = 2
         cfg.dataloader.shuffle = False
         cfg.val_dataloader.shuffle = False
-        cfg.training.num_epochs = 10  # 调试模式减少epoch
+        cfg.training.num_epochs = 60  # 调试模式：60个epoch，足够测试优化
 
     # 创建自适应训练器
     adaptive_trainer = AdaptiveTrainer(cfg)
@@ -363,37 +362,187 @@ def main(cfg: OmegaConf):
         print("Starting adaptive training with Bayesian optimization...")
         print(f"Initial parameters: {adaptive_trainer.current_params}")
         
-        # 运行原始训练
-        original_run()
+        # 运行原始训练，但在每个epoch后检查是否需要优化
+        print("Starting original training...")
         
-        # 训练完成后的最终优化
-        print("Training completed! Running final optimization...")
+        # 获取原始run方法的代码并修改
+        cfg = copy.deepcopy(workspace.cfg)
         
-        # 找到最新的checkpoint进行优化
-        checkpoint_pattern = f"{workspace.output_dir}/checkpoints/epoch=*-*.ckpt"
-        checkpoints = glob.glob(checkpoint_pattern)
-        
-        if checkpoints:
-            latest_checkpoint = max(checkpoints, key=os.path.getctime)
-            print(f"Using latest checkpoint for optimization: {latest_checkpoint}")
-            
-            optimized_params = adaptive_trainer.run_bayesian_optimization(latest_checkpoint, cfg.training.num_epochs)
-            
-            if optimized_params:
-                print(f"Final optimized parameters: {optimized_params}")
-                # 更新配置
-                adaptive_trainer._update_config_with_params(optimized_params)
-                # 直接更新模型参数
-                adaptive_trainer._update_model_params(workspace, optimized_params)
-                print("✅ Parameters successfully updated in both config and model!")
-            else:
-                print("No improvement found in final optimization.")
+        # 设置accelerator
+        if "deepspeed_config" in cfg.training and cfg.training.deepspeed_config is not None:
+            deepspeed_plugin = DeepSpeedPlugin(hf_ds_config=cfg.training.deepspeed_config)
+            accelerator = Accelerator(
+                gradient_accumulation_steps=cfg.training.gradient_accumulate_every,
+                mixed_precision=cfg.training.mixed_precision,
+                log_with="wandb",
+                project_dir=workspace.output_dir,
+                deepspeed_plugin=deepspeed_plugin,
+            )
         else:
-            print("No checkpoint found for final optimization.")
-        
-        # 保存优化历史
-        adaptive_trainer.save_optimization_history("final_optimization_history.json")
-        print("All training completed!")
+            accelerator = Accelerator(
+                gradient_accumulation_steps=cfg.training.gradient_accumulate_every,
+                mixed_precision=cfg.training.mixed_precision,
+                log_with="wandb",
+                project_dir=workspace.output_dir,
+            )
+
+        # 准备数据加载器
+        train_dataset = hydra.utils.instantiate(cfg.task.dataset)
+        train_dataloader = DataLoader(
+            train_dataset,
+            batch_size=cfg.dataloader.batch_size,
+            shuffle=cfg.dataloader.shuffle,
+            num_workers=cfg.dataloader.num_workers,
+            pin_memory=cfg.dataloader.pin_memory,
+            drop_last=True,
+        )
+
+        val_dataset = hydra.utils.instantiate(cfg.task.val_dataset)
+        val_dataloader = DataLoader(
+            val_dataset,
+            batch_size=cfg.val_dataloader.batch_size,
+            shuffle=cfg.val_dataloader.shuffle,
+            num_workers=cfg.val_dataloader.num_workers,
+            pin_memory=cfg.val_dataloader.pin_memory,
+            drop_last=True,
+        )
+
+        # 准备模型和优化器
+        workspace.model, workspace.optimizer, train_dataloader, val_dataloader = accelerator.prepare(
+            workspace.model, workspace.optimizer, train_dataloader, val_dataloader
+        )
+
+        # 设置学习率调度器
+        workspace.lr_scheduler = get_scheduler(
+            cfg.training.lr_scheduler,
+            optimizer=workspace.optimizer,
+            num_warmup_steps=cfg.training.lr_warmup_steps,
+            num_training_steps=cfg.training.num_epochs * len(train_dataloader),
+        )
+
+        # 设置EMA
+        if cfg.training.use_ema:
+            ema = EMAModel(workspace.model, decay=cfg.training.ema_decay)
+
+        # 设置checkpoint管理器
+        topk_manager = TopKCheckpointManager(
+            save_dir=workspace.output_dir,
+            **cfg.checkpoint.topk
+        )
+
+        # 设置环境运行器
+        env_runners = None
+        if cfg.model.policy.action_model_params.predict_action and "env_runner" in cfg.task:
+            env_runners = load_env_runner(cfg.task.env_runner)
+
+        device = accelerator.device
+        workspace.model.train()
+
+        # 训练循环
+        for local_epoch_idx in range(cfg.training.num_epochs):
+            step_log = dict()
+            train_losses = list()
+            
+            print(f"\n=== Epoch {workspace.epoch + 1}/{cfg.training.num_epochs} ===")
+            
+            with tqdm.tqdm(
+                train_dataloader,
+                desc=f"Training epoch {workspace.epoch}",
+                leave=False,
+                mininterval=cfg.training.tqdm_interval_sec,
+            ) as tepoch:
+                for batch_idx, batch in enumerate(tepoch):
+                    # 训练步骤
+                    batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+                    batch = resize_image(cfg, batch)
+                    
+                    if (
+                        "deepspeed_config" in cfg.training
+                        and cfg.training.deepspeed_config is not None
+                    ): 
+                        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                            raw_loss, (loss_diffusion, loss_action) = workspace.model(batch)
+                    else:
+                        raw_loss, (loss_diffusion, loss_action) = workspace.model(batch)
+                    
+                    accelerator.backward(raw_loss)
+                    
+                    if workspace.global_step % cfg.training.gradient_accumulate_every == 0:
+                        workspace.optimizer.step()
+                        workspace.optimizer.zero_grad()
+                        workspace.lr_scheduler.step()
+
+                    if cfg.training.use_ema:
+                        ema.step(accelerator.unwrap_model(workspace.model))
+
+                    raw_loss_cpu = raw_loss.item()
+                    tepoch.set_postfix(loss=raw_loss_cpu, refresh=False)
+                    train_losses.append(raw_loss_cpu)
+
+                    step_log = {
+                        "train_loss": raw_loss_cpu,
+                        "global_step": workspace.global_step,
+                        "epoch": workspace.epoch,
+                        "lr": workspace.lr_scheduler.get_last_lr()[0],
+                    }
+
+                    is_last_batch = batch_idx == (len(train_dataloader) - 1)
+                    if not is_last_batch:
+                        accelerator.log(step_log, step=workspace.global_step)
+                        workspace.global_step += 1
+
+                    if (cfg.training.max_train_steps is not None) and batch_idx >= (
+                        cfg.training.max_train_steps - 1
+                    ):
+                        break
+
+            train_loss = np.mean(train_losses)
+            step_log["train_loss"] = train_loss
+
+            # 检查是否需要优化
+            if adaptive_trainer.should_optimize(workspace.epoch + 1):
+                print(f"\n🔄 Triggering Bayesian optimization at epoch {workspace.epoch + 1}")
+                
+                # 找到最新的checkpoint
+                checkpoint_pattern = f"{workspace.output_dir}/checkpoints/epoch=*-*.ckpt"
+                checkpoints = glob.glob(checkpoint_pattern)
+                
+                if checkpoints:
+                    latest_checkpoint = max(checkpoints, key=os.path.getctime)
+                    print(f"Using checkpoint for optimization: {latest_checkpoint}")
+                    
+                    # 运行贝叶斯优化
+                    optimized_params = adaptive_trainer.run_bayesian_optimization(latest_checkpoint, workspace.epoch + 1)
+                    
+                    if optimized_params:
+                        print(f"✅ Updating parameters with optimized values: {optimized_params}")
+                        # 更新配置
+                        adaptive_trainer._update_config_with_params(optimized_params)
+                        # 直接更新模型参数
+                        adaptive_trainer._update_model_params(workspace, optimized_params)
+                        print("✅ Parameters successfully updated in both config and model!")
+                    else:
+                        print("No improvement found, keeping current parameters.")
+                else:
+                    print("No checkpoint found for optimization.")
+
+            # 保存checkpoint
+            if (workspace.epoch % cfg.training.checkpoint_every) == 0 and accelerator.is_main_process:
+                model_ddp = workspace.model
+                workspace.model = accelerator.unwrap_model(workspace.model)
+                
+                if cfg.checkpoint.save_last_ckpt:
+                    workspace.save_checkpoint()
+                
+                workspace.model = model_ddp
+
+            accelerator.wait_for_everyone()
+            accelerator.log(step_log, step=workspace.global_step)
+            workspace.global_step += 1
+            workspace.epoch += 1
+
+        accelerator.end_training()
+        print("Training completed!")
     
     # 替换run方法
     workspace.run = adaptive_run
