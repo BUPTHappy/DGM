@@ -491,6 +491,9 @@ def main(cfg: OmegaConf):
                     batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
                     batch = resize_image(cfg, batch)
                     
+                    # 确保模型处于训练模式
+                    workspace.model.train()
+                    
                     if (
                         "deepspeed_config" in cfg.training
                         and cfg.training.deepspeed_config is not None
@@ -499,6 +502,17 @@ def main(cfg: OmegaConf):
                             raw_loss, (loss_diffusion, loss_action) = workspace.model(batch)
                     else:
                         raw_loss, (loss_diffusion, loss_action) = workspace.model(batch)
+                    
+                    # 检查loss是否需要梯度
+                    if not raw_loss.requires_grad:
+                        print(f"Warning: raw_loss does not require grad! raw_loss: {raw_loss}")
+                        print(f"Model training mode: {workspace.model.training}")
+                        # 检查模型参数是否需要梯度
+                        trainable_params = [p for p in workspace.model.parameters() if p.requires_grad]
+                        print(f"Trainable parameters: {len(trainable_params)}")
+                        if len(trainable_params) == 0:
+                            print("No trainable parameters found!")
+                            continue
                     
                     accelerator.backward(raw_loss)
                     
