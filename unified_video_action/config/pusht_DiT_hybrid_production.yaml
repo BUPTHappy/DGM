@@ -69,10 +69,10 @@ logging:
   - production
 
 multi_run:
-  run_dir: data/outputs/train_uva_pusht_bayesian_production
-  wandb_name_base: train_uva_pusht_bayesian_production
+  run_dir: data/outputs/train_uva_pusht_bayesian_production_resume
+  wandb_name_base: train_uva_pusht_bayesian_production_resume
 
-payload: checkpoints/pusht.ckpt
+payload: /home/zhuliu/workspace/Towards-Generalizable-Embodied-AI-via-Diffusion-Based-Robotic-Policies/checkpoints/pusht_production/checkpoints/epoch=0050-test_mean_score=0.991.ckpt
 freeze_submodules: true
 
 save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
@@ -80,7 +80,7 @@ save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
 # Bayesian Optimization Configuration for Production
 bayesian_optimization:
   enabled: true
-  start_epoch: 10   # 在第10个epoch进行早期测试（有checkpoint）
+  start_epoch: 70   # 从Epoch 50开始，第70个epoch进行早期测试
   interval: 20     # 每20个epoch优化一次
   max_trials: 6    # 正常优化用6个trial（早期测试会自动用2个）
   n_test: 3        # 正常优化用3个test（早期测试会自动用1个）
