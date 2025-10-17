@@ -523,6 +523,18 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         else:
                             print(f"Skipping invalid checkpoint: {path}")
                 
+                # If no valid checkpoint found, try to use the most recent one anyway (fallback)
+                if checkpoint_path is None:
+                    checkpoints_dir = os.path.join(self.output_dir, "checkpoints")
+                    if os.path.exists(checkpoints_dir):
+                        checkpoint_files = [f for f in os.listdir(checkpoints_dir) if f.endswith('.ckpt')]
+                        if checkpoint_files:
+                            # Use the most recent checkpoint file as fallback
+                            checkpoint_files.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoints_dir, x)), reverse=True)
+                            fallback_path = os.path.join(checkpoints_dir, checkpoint_files[0])
+                            print(f"Using fallback checkpoint (validation failed but file exists): {fallback_path}")
+                            checkpoint_path = fallback_path
+                
                 if checkpoint_path and os.path.exists(checkpoint_path):
                     print(f"Using checkpoint: {checkpoint_path}")
                     # Run Bayesian optimization

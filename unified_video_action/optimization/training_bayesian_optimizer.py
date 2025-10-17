@@ -456,19 +456,26 @@ class TrainingBayesianOptimizer:
                 print(f"Checkpoint file too small: {file_size} bytes")
                 return False
             
-            # Try to load the checkpoint header
-            with open(checkpoint_path, "rb") as f:
-                # Try to read the first few bytes to check if it's a valid pickle file
-                header = f.read(4)
-                if not header:
-                    return False
-                
-                # Check if it starts with pickle magic bytes
-                if header.startswith(b'\x80\x02') or header.startswith(b'\x80\x03'):
-                    return True
-                else:
-                    print(f"Checkpoint file doesn't appear to be a valid pickle file")
-                    return False
+            # Try to actually load the checkpoint to verify it's valid
+            try:
+                with open(checkpoint_path, "rb") as f:
+                    # Try to load just the header to check if it's valid
+                    import dill
+                    # Read a small portion to check if it's a valid pickle file
+                    f.seek(0)
+                    # Try to load the checkpoint
+                    checkpoint = torch.load(f, pickle_module=dill, weights_only=False)
+                    
+                    # Check if it has the expected structure
+                    if isinstance(checkpoint, dict) and 'cfg' in checkpoint:
+                        return True
+                    else:
+                        print(f"Checkpoint doesn't have expected structure: {list(checkpoint.keys()) if isinstance(checkpoint, dict) else type(checkpoint)}")
+                        return False
+                        
+            except Exception as load_error:
+                print(f"Failed to load checkpoint: {load_error}")
+                return False
                     
         except Exception as e:
             print(f"Error checking checkpoint validity: {e}")
