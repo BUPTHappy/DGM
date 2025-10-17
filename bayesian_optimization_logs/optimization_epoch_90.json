@@ -1,0 +1,27 @@
+{
+  "epoch": 90,
+  "best_params": {
+    "consistc_ratio": 0.8351964777435485,
+    "rfba_gap_end": 0.7613159373020264,
+    "temperature": 0.7023095396487027,
+    "num_sampling_steps": 3,
+    "cfg": 0.823087721733716,
+    "extrapol_ratio": 0.151054199651464,
+    "window_size": 16,
+    "lambda_local": 0.1495900680185925,
+    "ucgmts_config": {
+      "transport_type": "Linear",
+      "consistc_ratio": 0.8351964777435485,
+      "scaled_cbl_eps": 0.0,
+      "ema_decay_rate": 0.0,
+      "rfba_gap_steps": [
+        0.001,
+        0.7613159373020264
+      ],
+      "extrapol_ratio": 0.151054199651464
+    }
+  },
+  "best_score": 0.9651307743849151,
+  "checkpoint_path": "/home/zhuliu/workspace/Towards-Generalizable-Embodied-AI-via-Diffusion-Based-Robotic-Policies/checkpoints/pusht_production_resume/checkpoints/latest.ckpt",
+  "timestamp": 1760731001.7159326
+}
