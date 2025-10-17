@@ -439,9 +439,25 @@ def main(cfg: OmegaConf):
 
         # 设置EMA
         if cfg.training.use_ema:
-            # 从ema配置中获取decay参数，如果没有则使用默认值
-            ema_decay = getattr(cfg.ema, 'max_value', 0.9999) if hasattr(cfg, 'ema') else 0.9999
-            ema = EMAModel(workspace.model, decay=ema_decay)
+            # 从ema配置中获取参数，如果没有则使用默认值
+            ema_params = {}
+            if hasattr(cfg, 'ema'):
+                ema_params = {
+                    'update_after_step': getattr(cfg.ema, 'update_after_step', 0),
+                    'inv_gamma': getattr(cfg.ema, 'inv_gamma', 1.0),
+                    'power': getattr(cfg.ema, 'power', 0.75),
+                    'min_value': getattr(cfg.ema, 'min_value', 0.0),
+                    'max_value': getattr(cfg.ema, 'max_value', 0.9999),
+                }
+            else:
+                ema_params = {
+                    'update_after_step': 0,
+                    'inv_gamma': 1.0,
+                    'power': 0.75,
+                    'min_value': 0.0,
+                    'max_value': 0.9999,
+                }
+            ema = EMAModel(workspace.model, **ema_params)
 
         # 设置checkpoint管理器
         topk_manager = TopKCheckpointManager(
