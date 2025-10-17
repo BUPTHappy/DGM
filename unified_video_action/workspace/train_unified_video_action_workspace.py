@@ -95,6 +95,30 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                 output_dir=cfg.bayesian_optimization.output_dir
             )
             print(f"Bayesian optimization enabled: start_epoch={cfg.bayesian_optimization.start_epoch}, interval={cfg.bayesian_optimization.interval}")
+            
+            # Print initial model parameters for reference
+            print(f"\n{'='*50}")
+            print(f"INITIAL MODEL PARAMETERS:")
+            print(f"{'='*50}")
+            if hasattr(self.model, 'autoregressive_model_params'):
+                autoregressive_params = self.model.autoregressive_model_params
+                print(f"Initial num_sampling_steps: {getattr(autoregressive_params, 'num_sampling_steps', 'N/A')}")
+                print(f"Initial cfg: {getattr(autoregressive_params, 'cfg', 'N/A')}")
+                print(f"Initial temperature: {getattr(autoregressive_params, 'temperature', 'N/A')}")
+                print(f"Initial window_size: {getattr(autoregressive_params, 'window_size', 'N/A')}")
+                print(f"Initial lambda_local: {getattr(autoregressive_params, 'lambda_local', 'N/A')}")
+                print(f"Initial use_ucgm: {getattr(autoregressive_params, 'use_ucgm', 'N/A')}")
+                
+                if hasattr(autoregressive_params, 'ucgmts_config'):
+                    ucgmts_config = autoregressive_params.ucgmts_config
+                    print(f"Initial ucgmts_config:")
+                    print(f"  transport_type: {getattr(ucgmts_config, 'transport_type', 'N/A')}")
+                    print(f"  consistc_ratio: {getattr(ucgmts_config, 'consistc_ratio', 'N/A')}")
+                    print(f"  scaled_cbl_eps: {getattr(ucgmts_config, 'scaled_cbl_eps', 'N/A')}")
+                    print(f"  ema_decay_rate: {getattr(ucgmts_config, 'ema_decay_rate', 'N/A')}")
+                    print(f"  rfba_gap_steps: {getattr(ucgmts_config, 'rfba_gap_steps', 'N/A')}")
+                    print(f"  extrapol_ratio: {getattr(ucgmts_config, 'extrapol_ratio', 'N/A')}")
+            print(f"{'='*50}")
     
     def freeze_submodules(self, action_only=False):
         # freeze submodules except the action diffusion head
@@ -469,13 +493,30 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                 print(f"Starting Bayesian optimization at epoch {self.epoch}")
                 print(f"{'='*60}")
                 
-                # Get current checkpoint path
-                checkpoint_path = os.path.join(self.output_dir, "checkpoints", "last.ckpt")
-                if not os.path.exists(checkpoint_path):
-                    # Try alternative checkpoint path
-                    checkpoint_path = os.path.join(self.output_dir, "checkpoints", f"epoch={self.epoch:04d}-test_mean_score={step_log.get('test_mean_score', 0.0):.3f}.ckpt")
+                # Get current checkpoint path - try multiple possible locations
+                checkpoint_path = None
+                possible_paths = [
+                    os.path.join(self.output_dir, "checkpoints", "latest.ckpt"),
+                    os.path.join(self.output_dir, "checkpoints", "last.ckpt"),
+                    os.path.join(self.output_dir, "checkpoints", f"epoch={self.epoch:04d}-test_mean_score={step_log.get('test_mean_score', 0.0):.3f}.ckpt")
+                ]
                 
-                if os.path.exists(checkpoint_path):
+                # Also try to find any checkpoint file in the checkpoints directory
+                checkpoints_dir = os.path.join(self.output_dir, "checkpoints")
+                if os.path.exists(checkpoints_dir):
+                    checkpoint_files = [f for f in os.listdir(checkpoints_dir) if f.endswith('.ckpt')]
+                    if checkpoint_files:
+                        # Use the most recent checkpoint file
+                        checkpoint_files.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoints_dir, x)), reverse=True)
+                        possible_paths.append(os.path.join(checkpoints_dir, checkpoint_files[0]))
+                
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        checkpoint_path = path
+                        break
+                
+                if checkpoint_path and os.path.exists(checkpoint_path):
+                    print(f"Using checkpoint: {checkpoint_path}")
                     # Run Bayesian optimization
                     best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch)
                     
@@ -490,6 +531,40 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         if success:
                             print(f"Successfully applied optimized parameters to model")
                             
+                            # Verify parameters were actually applied by checking the model
+                            print(f"\n{'='*50}")
+                            print(f"VERIFICATION: Checking model parameters after application:")
+                            print(f"{'='*50}")
+                            if hasattr(policy, 'autoregressive_model_params'):
+                                autoregressive_params = policy.autoregressive_model_params
+                                print(f"✓ Verified num_sampling_steps: {autoregressive_params.num_sampling_steps}")
+                                print(f"✓ Verified cfg: {autoregressive_params.cfg}")
+                                print(f"✓ Verified temperature: {autoregressive_params.temperature}")
+                                print(f"✓ Verified window_size: {autoregressive_params.window_size}")
+                                print(f"✓ Verified lambda_local: {autoregressive_params.lambda_local}")
+                                print(f"✓ Verified use_ucgm: {autoregressive_params.use_ucgm}")
+                                
+                                if hasattr(autoregressive_params, 'ucgmts_config'):
+                                    ucgmts_config = autoregressive_params.ucgmts_config
+                                    print(f"✓ Verified ucgmts_config:")
+                                    print(f"    transport_type: {ucgmts_config.transport_type}")
+                                    print(f"    consistc_ratio: {ucgmts_config.consistc_ratio}")
+                                    print(f"    rfba_gap_steps: {ucgmts_config.rfba_gap_steps}")
+                                    print(f"    extrapol_ratio: {ucgmts_config.extrapol_ratio}")
+                                
+                                # Also verify the actual model components
+                                if hasattr(policy, 'model') and hasattr(policy.model, 'diffactloss'):
+                                    diffactloss = policy.model.diffactloss
+                                    print(f"✓ Verified DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
+                                    if hasattr(diffactloss, 'ucgmts'):
+                                        ucgmts = diffactloss.ucgmts
+                                        print(f"✓ Verified UCGMTS parameters:")
+                                        print(f"    transport_type: {ucgmts.transport_type}")
+                                        print(f"    consistc_ratio: {ucgmts.consistc_ratio}")
+                                        print(f"    rfba_gap_steps: {ucgmts.rfba_gap_steps}")
+                                        print(f"    extrapol_ratio: {ucgmts.extrapol_ratio}")
+                            print(f"{'='*50}")
+                            
                             # Log optimization results
                             optimization_log = {
                                 "bayesian_optimization_score": self.bayesian_optimizer.best_score,
@@ -502,7 +577,10 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     else:
                         print(f"Bayesian optimization failed at epoch {self.epoch}")
                 else:
-                    print(f"Checkpoint not found for Bayesian optimization: {checkpoint_path}")
+                    print(f"No checkpoint found for Bayesian optimization. Searched paths:")
+                    for path in possible_paths:
+                        print(f"  - {path}")
+                    print(f"Skipping Bayesian optimization at epoch {self.epoch}")
             
             policy.model.diffactloss.train()
             # policy.train()

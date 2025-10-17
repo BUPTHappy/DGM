@@ -265,6 +265,41 @@ class TrainingBayesianOptimizer:
         try:
             print(f"Applying parameters to model: {params}")
             
+            # Print current model parameters before update
+            print(f"\n{'='*50}")
+            print(f"MODEL PARAMETERS BEFORE UPDATE:")
+            print(f"{'='*50}")
+            if hasattr(model, 'autoregressive_model_params'):
+                autoregressive_params = model.autoregressive_model_params
+                print(f"Current num_sampling_steps: {getattr(autoregressive_params, 'num_sampling_steps', 'N/A')}")
+                print(f"Current cfg: {getattr(autoregressive_params, 'cfg', 'N/A')}")
+                print(f"Current temperature: {getattr(autoregressive_params, 'temperature', 'N/A')}")
+                print(f"Current window_size: {getattr(autoregressive_params, 'window_size', 'N/A')}")
+                print(f"Current lambda_local: {getattr(autoregressive_params, 'lambda_local', 'N/A')}")
+                print(f"Current use_ucgm: {getattr(autoregressive_params, 'use_ucgm', 'N/A')}")
+                
+                if hasattr(autoregressive_params, 'ucgmts_config'):
+                    ucgmts_config = autoregressive_params.ucgmts_config
+                    print(f"Current ucgmts_config:")
+                    print(f"  transport_type: {getattr(ucgmts_config, 'transport_type', 'N/A')}")
+                    print(f"  consistc_ratio: {getattr(ucgmts_config, 'consistc_ratio', 'N/A')}")
+                    print(f"  scaled_cbl_eps: {getattr(ucgmts_config, 'scaled_cbl_eps', 'N/A')}")
+                    print(f"  ema_decay_rate: {getattr(ucgmts_config, 'ema_decay_rate', 'N/A')}")
+                    print(f"  rfba_gap_steps: {getattr(ucgmts_config, 'rfba_gap_steps', 'N/A')}")
+                    print(f"  extrapol_ratio: {getattr(ucgmts_config, 'extrapol_ratio', 'N/A')}")
+                
+                # Also check the actual model components
+                if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
+                    diffactloss = model.model.diffactloss
+                    print(f"Current DiffActLoss num_sampling_steps: {getattr(diffactloss, 'num_sampling_steps', 'N/A')}")
+                    if hasattr(diffactloss, 'ucgmts'):
+                        ucgmts = diffactloss.ucgmts
+                        print(f"Current UCGMTS parameters:")
+                        print(f"  transport_type: {getattr(ucgmts, 'transport_type', 'N/A')}")
+                        print(f"  consistc_ratio: {getattr(ucgmts, 'consistc_ratio', 'N/A')}")
+                        print(f"  rfba_gap_steps: {getattr(ucgmts, 'rfba_gap_steps', 'N/A')}")
+                        print(f"  extrapol_ratio: {getattr(ucgmts, 'extrapol_ratio', 'N/A')}")
+            
             # Update model parameters
             if hasattr(model, 'autoregressive_model_params'):
                 autoregressive_params = model.autoregressive_model_params
@@ -287,6 +322,52 @@ class TrainingBayesianOptimizer:
                 autoregressive_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
                 autoregressive_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
                 autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                
+                # Also update the actual model components
+                if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
+                    diffactloss = model.model.diffactloss
+                    diffactloss.num_sampling_steps = params['num_sampling_steps']
+                    
+                    if hasattr(diffactloss, 'ucgmts'):
+                        ucgmts = diffactloss.ucgmts
+                        ucgmts.transport_type = params['ucgmts_config']['transport_type']
+                        ucgmts.consistc_ratio = params['ucgmts_config']['consistc_ratio']
+                        ucgmts.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
+                        ucgmts.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
+                        ucgmts.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+                        ucgmts.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                
+                # Print updated model parameters
+                print(f"\n{'='*50}")
+                print(f"MODEL PARAMETERS AFTER UPDATE:")
+                print(f"{'='*50}")
+                print(f"Updated num_sampling_steps: {autoregressive_params.num_sampling_steps}")
+                print(f"Updated cfg: {autoregressive_params.cfg}")
+                print(f"Updated temperature: {autoregressive_params.temperature}")
+                print(f"Updated window_size: {autoregressive_params.window_size}")
+                print(f"Updated lambda_local: {autoregressive_params.lambda_local}")
+                print(f"Updated use_ucgm: {autoregressive_params.use_ucgm}")
+                
+                print(f"Updated ucgmts_config:")
+                print(f"  transport_type: {autoregressive_params.ucgmts_config.transport_type}")
+                print(f"  consistc_ratio: {autoregressive_params.ucgmts_config.consistc_ratio}")
+                print(f"  scaled_cbl_eps: {autoregressive_params.ucgmts_config.scaled_cbl_eps}")
+                print(f"  ema_decay_rate: {autoregressive_params.ucgmts_config.ema_decay_rate}")
+                print(f"  rfba_gap_steps: {autoregressive_params.ucgmts_config.rfba_gap_steps}")
+                print(f"  extrapol_ratio: {autoregressive_params.ucgmts_config.extrapol_ratio}")
+                
+                # Also print the actual model components
+                if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
+                    diffactloss = model.model.diffactloss
+                    print(f"Updated DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
+                    if hasattr(diffactloss, 'ucgmts'):
+                        ucgmts = diffactloss.ucgmts
+                        print(f"Updated UCGMTS parameters:")
+                        print(f"  transport_type: {ucgmts.transport_type}")
+                        print(f"  consistc_ratio: {ucgmts.consistc_ratio}")
+                        print(f"  rfba_gap_steps: {ucgmts.rfba_gap_steps}")
+                        print(f"  extrapol_ratio: {ucgmts.extrapol_ratio}")
+                print(f"{'='*50}")
                 
                 print("Parameters successfully applied to model")
                 return True
