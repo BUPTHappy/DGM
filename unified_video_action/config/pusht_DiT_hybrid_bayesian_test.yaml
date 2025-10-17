@@ -28,7 +28,7 @@ training:
   lr_warmup_steps: 1000
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 10  # 减少到20个epoch用于测试
+  num_epochs: 15  # 只跑15个epoch用于测试
   resume: true
   rollout_every: 1
   sample_every: 5
@@ -80,9 +80,9 @@ save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
 # Bayesian Optimization Configuration for Testing
 bayesian_optimization:
   enabled: true
-  start_epoch: 3   # 在第8个epoch开始优化（40%的位置）
-  interval: 4     # 每4个epoch优化一次
-  max_trials: 3    # 减少试验次数用于快速测试
-  n_test: 2        # 减少测试次数用于快速测试
+  start_epoch: 5   # 在第5个epoch开始优化
+  interval: 5     # 每5个epoch优化一次（第5、10个epoch）
+  max_trials: 2    # 减少试验次数，快速测试
+  n_test: 1        # 减少测试次数，快速测试
   device: cuda:0
   output_dir: ./bayesian_optimization_test_logs

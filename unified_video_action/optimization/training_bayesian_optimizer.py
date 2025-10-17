@@ -82,6 +82,9 @@ class TrainingBayesianOptimizer:
         try:
             print(f"Evaluating params: {params}")
             
+            # Clear CUDA cache before evaluation
+            torch.cuda.empty_cache()
+            
             # Load checkpoint and config
             payload = torch.load(open(checkpoint_path, "rb"), pickle_module=dill, weights_only=False)
             cfg = payload["cfg"]
@@ -178,9 +181,21 @@ class TrainingBayesianOptimizer:
             
         except subprocess.TimeoutExpired:
             print("Evaluation timeout")
+            torch.cuda.empty_cache()
             return -1000.0
+        except RuntimeError as e:
+            if "CUDA" in str(e) or "cuda" in str(e).lower():
+                print(f"CUDA error during evaluation: {e}")
+                print("Clearing CUDA cache and retrying...")
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                return -1000.0
+            else:
+                print(f"Runtime error during evaluation: {e}")
+                return -1000.0
         except Exception as e:
             print(f"Evaluation error: {e}")
+            torch.cuda.empty_cache()
             return -1000.0
     
     def run_optimization(self, 
@@ -206,7 +221,19 @@ class TrainingBayesianOptimizer:
         
         try:
             # Run optimization
-            best_params, best_score = self.optimizer.optimize(objective_function)
+            result = self.optimizer.optimize(objective_function)
+            
+            # Handle case where optimization returns None or fails
+            if result is None:
+                print("Optimization returned None - all trials failed")
+                return None
+            
+            # Unpack result safely
+            if isinstance(result, tuple) and len(result) == 2:
+                best_params, best_score = result
+            else:
+                print(f"Unexpected optimization result format: {result}")
+                return None
             
             if best_params is not None and best_score > -1000.0:
                 print(f"Optimization completed!")
@@ -220,12 +247,13 @@ class TrainingBayesianOptimizer:
                     print(f"New best parameters found! Score: {best_score:.4f}")
                 
                 # Save optimization results
+                import time
                 optimization_result = {
                     'epoch': current_epoch,
                     'best_params': best_params,
                     'best_score': best_score,
                     'checkpoint_path': checkpoint_path,
-                    'timestamp': torch.cuda.Event(enable_timing=True).elapsed_time(torch.cuda.Event(enable_timing=True))
+                    'timestamp': time.time()
                 }
                 
                 self.optimization_history.append(optimization_result)
