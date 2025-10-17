@@ -468,7 +468,7 @@ def main(cfg: OmegaConf):
         # 设置环境运行器
         env_runners = None
         if cfg.model.policy.action_model_params.predict_action and "env_runner" in cfg.task:
-            env_runners = load_env_runner(cfg.task.env_runner, workspace.output_dir)
+            env_runners = load_env_runner(cfg, workspace.output_dir)
 
         device = accelerator.device
         workspace.model.train()
