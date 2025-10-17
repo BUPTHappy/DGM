@@ -58,7 +58,7 @@ ema:
 logging:
   group: null
   id: null
-  mode: online
+  mode: offline  # 改为offline模式，避免wandb API key问题
   name: train_uva_pusht_bayesian_test
   project: unified_video_action
   resume: false
