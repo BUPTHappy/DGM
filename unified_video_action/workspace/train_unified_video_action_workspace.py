@@ -80,6 +80,21 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
         # configure training state
         self.global_step = 0
         self.epoch = 0
+        
+        # Initialize Bayesian optimizer if enabled
+        self.bayesian_optimizer = None
+        if hasattr(cfg, 'bayesian_optimization') and cfg.bayesian_optimization.enabled:
+            from unified_video_action.optimization.training_bayesian_optimizer import TrainingBayesianOptimizer
+            self.bayesian_optimizer = TrainingBayesianOptimizer(
+                config=cfg,
+                start_epoch=cfg.bayesian_optimization.start_epoch,
+                interval=cfg.bayesian_optimization.interval,
+                max_trials=cfg.bayesian_optimization.max_trials,
+                n_test=cfg.bayesian_optimization.n_test,
+                device=cfg.bayesian_optimization.device,
+                output_dir=cfg.bayesian_optimization.output_dir
+            )
+            print(f"Bayesian optimization enabled: start_epoch={cfg.bayesian_optimization.start_epoch}, interval={cfg.bayesian_optimization.interval}")
     
     def freeze_submodules(self, action_only=False):
         # freeze submodules except the action diffusion head
@@ -444,6 +459,51 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     self.model = model_ddp
             accelerator.wait_for_everyone()
             # ========= eval end for this epoch ==========
+            
+            # ========= Bayesian Optimization ==========
+            if (self.bayesian_optimizer is not None and 
+                self.bayesian_optimizer.should_optimize(self.epoch) and 
+                accelerator.is_main_process):
+                
+                print(f"\n{'='*60}")
+                print(f"Starting Bayesian optimization at epoch {self.epoch}")
+                print(f"{'='*60}")
+                
+                # Get current checkpoint path
+                checkpoint_path = os.path.join(self.output_dir, "checkpoints", "last.ckpt")
+                if not os.path.exists(checkpoint_path):
+                    # Try alternative checkpoint path
+                    checkpoint_path = os.path.join(self.output_dir, "checkpoints", f"epoch={self.epoch:04d}-test_mean_score={step_log.get('test_mean_score', 0.0):.3f}.ckpt")
+                
+                if os.path.exists(checkpoint_path):
+                    # Run Bayesian optimization
+                    best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch)
+                    
+                    if best_params is not None:
+                        # Apply best parameters to model
+                        policy = accelerator.unwrap_model(self.model)
+                        if cfg.training.use_ema:
+                            policy = self.ema_model
+                        
+                        success = self.bayesian_optimizer.apply_best_params_to_model(policy, best_params)
+                        
+                        if success:
+                            print(f"Successfully applied optimized parameters to model")
+                            
+                            # Log optimization results
+                            optimization_log = {
+                                "bayesian_optimization_score": self.bayesian_optimizer.best_score,
+                                "bayesian_optimization_epoch": self.epoch,
+                                "bayesian_optimization_params": best_params
+                            }
+                            step_log.update(optimization_log)
+                        else:
+                            print(f"Failed to apply optimized parameters to model")
+                    else:
+                        print(f"Bayesian optimization failed at epoch {self.epoch}")
+                else:
+                    print(f"Checkpoint not found for Bayesian optimization: {checkpoint_path}")
+            
             policy.model.diffactloss.train()
             # policy.train()
             accelerator.log(step_log, step=self.global_step)
@@ -451,3 +511,16 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
             self.epoch += 1
 
         accelerator.end_training()
+        
+        # Print Bayesian optimization summary if enabled
+        if self.bayesian_optimizer is not None and accelerator.is_main_process:
+            summary = self.bayesian_optimizer.get_optimization_summary()
+            print(f"\n{'='*60}")
+            print(f"BAYESIAN OPTIMIZATION SUMMARY")
+            print(f"{'='*60}")
+            print(f"Total optimizations performed: {summary['total_optimizations']}")
+            print(f"Best score achieved: {summary['best_score']:.4f}")
+            if summary['best_params']:
+                print(f"Best parameters: {summary['best_params']}")
+            print(f"Optimization logs saved to: {self.bayesian_optimizer.output_dir}")
+            print(f"{'='*60}")

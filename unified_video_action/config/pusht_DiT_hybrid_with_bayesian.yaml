@@ -1,0 +1,87 @@
+name: uva
+
+defaults:
+  - _self_
+  - task: pusht
+  - model: fast_policy_dit_hybrid
+
+dataloader:
+  batch_size: 32
+  num_workers: 8
+  persistent_workers: false
+  pin_memory: true
+  shuffle: true
+
+val_dataloader:
+  batch_size: 32
+  num_workers: 8
+  persistent_workers: false
+  pin_memory: true
+  shuffle: false
+
+training:
+  checkpoint_every: 10
+  debug: false
+  device: cuda:0
+  gradient_accumulate_every: 1
+  lr_scheduler: cosine
+  lr_warmup_steps: 1000
+  max_train_steps: null
+  max_val_steps: null
+  num_epochs: 200
+  resume: true
+  rollout_every: 1
+  sample_every: 5
+  seed: 42
+  tqdm_interval_sec: 1.0
+  use_ema: true
+  val_every: 1
+  mixed_precision: 'fp16'
+  
+checkpoint:
+  save_last_ckpt: true
+  save_last_snapshot: false
+  topk:
+    monitor_key: test_mean_score
+    format_str: epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt
+    k: 1
+    mode: max
+
+ema:
+  _target_: unified_video_action.model.autoregressive.ema_model.EMAModel
+  inv_gamma: 1.0
+  max_value: 0.9999
+  min_value: 0.0
+  power: 0.75
+  update_after_step: 0
+
+logging:
+  group: null
+  id: null
+  mode: online
+  name: train_uva_pusht_with_bayesian
+  project: unified_video_action
+  resume: false
+  tags:
+  - train_uva_pusht
+  - pusht
+  - bayesian_optimization
+
+multi_run:
+  run_dir: data/outputs/train_uva_pusht_with_bayesian
+  wandb_name_base: train_uva_pusht_with_bayesian
+
+payload: checkpoints/pusht.ckpt
+freeze_submodules: true
+
+save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
+
+# Bayesian Optimization Configuration
+bayesian_optimization:
+  enabled: true
+  start_epoch: 100  # Start optimization at 50% of training (epoch 100 out of 200)
+  interval: 10      # Optimize every 10 epochs
+  max_trials: 15    # Reduced trials for training integration
+  n_test: 5         # Reduced test count for faster evaluation
+  device: cuda:0
+  output_dir: ./bayesian_optimization_logs

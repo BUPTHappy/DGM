@@ -2,6 +2,12 @@
 Usage:
 Training:
 python train.py --config-name=train_diffusion_lowdim_workspace
+
+Training with Bayesian Optimization:
+python train.py --config-name=train_diffusion_lowdim_workspace \
+    bayesian_optimization.enabled=true \
+    bayesian_optimization.start_epoch=100 \
+    bayesian_optimization.interval=10
 """
 # import torch.multiprocessing as mp
 # mp.set_start_method('spawn', force=True)
@@ -51,6 +57,18 @@ def main(cfg: OmegaConf):
     with open_dict(cfg):
         cfg.n_gpus = torch.cuda.device_count()
         cfg.model.policy.debug = cfg.training.debug
+        
+        # Add Bayesian optimization configuration if not present
+        if not hasattr(cfg, 'bayesian_optimization'):
+            cfg.bayesian_optimization = OmegaConf.create({
+                'enabled': False,
+                'start_epoch': cfg.training.num_epochs // 2,  # Start at 50% of training
+                'interval': 10,  # Optimize every 10 epochs
+                'max_trials': 15,  # Reduced trials for training integration
+                'n_test': 5,  # Reduced test count for faster evaluation
+                'device': 'cuda:0',
+                'output_dir': './bayesian_optimization_logs'
+            })
 
     if cfg.training.debug:
         cfg.dataloader.batch_size = 2
