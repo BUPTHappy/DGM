@@ -25,7 +25,12 @@ from torch.utils.data import DataLoader
 from accelerate import Accelerator
 from accelerate.utils import DeepSpeedPlugin
 from unified_video_action.workspace.base_workspace import BaseWorkspace
-from unified_video_action.optimization.bayesian_optimizer import UCGMBayesianOptimizer
+try:
+    from unified_video_action.optimization.bayesian_optimizer import UCGMBayesianOptimizer
+except ImportError as e:
+    print(f"Warning: Could not import UCGMBayesianOptimizer: {e}")
+    print("Make sure optuna is installed: pip install optuna")
+    UCGMBayesianOptimizer = None
 from unified_video_action.model.autoregressive.ema_model import EMAModel
 from unified_video_action.model.common.lr_scheduler import get_scheduler
 from unified_video_action.common.checkpoint_util import TopKCheckpointManager
@@ -262,6 +267,10 @@ class AdaptiveTrainer:
         def objective_function(params):
             return self.evaluate_with_checkpoint(checkpoint_path, params)
         
+        if UCGMBayesianOptimizer is None:
+            print("❌ UCGMBayesianOptimizer not available. Please install optuna.")
+            return None
+            
         optimizer = UCGMBayesianOptimizer(max_trials=max_trials)
         
         try:
@@ -397,7 +406,15 @@ def main(cfg: OmegaConf):
             drop_last=True,
         )
 
-        val_dataset = hydra.utils.instantiate(cfg.task.val_dataset)
+        # 检查是否有val_dataset配置，如果没有则使用dataset
+        if hasattr(cfg.task, 'val_dataset'):
+            val_dataset = hydra.utils.instantiate(cfg.task.val_dataset)
+        else:
+            # 使用相同的dataset但设置validation模式
+            val_dataset = hydra.utils.instantiate(cfg.task.dataset)
+            if hasattr(val_dataset, 'set_validation_mode'):
+                val_dataset.set_validation_mode(True)
+        
         val_dataloader = DataLoader(
             val_dataset,
             batch_size=cfg.val_dataloader.batch_size,
