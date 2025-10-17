@@ -20,7 +20,7 @@ val_dataloader:
   shuffle: false
 
 training:
-  checkpoint_every: 5
+  checkpoint_every: 10
   debug: false
   device: cuda:0
   gradient_accumulate_every: 1
@@ -80,9 +80,9 @@ save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
 # Bayesian Optimization Configuration for Production
 bayesian_optimization:
   enabled: true
-  start_epoch: 80   # 在第80个epoch开始优化（40%位置）
+  start_epoch: 10   # 在第10个epoch进行早期测试（有checkpoint）
   interval: 20     # 每20个epoch优化一次
-  max_trials: 6    # 适中的试验次数
-  n_test: 3        # 适中的测试次数
+  max_trials: 6    # 正常优化用6个trial（早期测试会自动用2个）
+  n_test: 3        # 正常优化用3个test（早期测试会自动用1个）
   device: cuda:1
   output_dir: ./bayesian_optimization_logs

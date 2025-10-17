@@ -85,6 +85,15 @@ class TrainingBayesianOptimizer:
             # Clear CUDA cache before evaluation
             torch.cuda.empty_cache()
             
+            # Wait a bit to ensure checkpoint is fully written
+            import time
+            time.sleep(2)
+            
+            # Check if checkpoint file is valid before loading
+            if not self._is_checkpoint_valid(checkpoint_path):
+                print(f"Checkpoint file is invalid or corrupted: {checkpoint_path}")
+                return -1000.0
+            
             # Load checkpoint and config
             payload = torch.load(open(checkpoint_path, "rb"), pickle_module=dill, weights_only=False)
             cfg = payload["cfg"]
@@ -216,12 +225,32 @@ class TrainingBayesianOptimizer:
         print(f"Checkpoint: {checkpoint_path}")
         print(f"{'='*60}")
         
+        # Adjust optimization parameters based on epoch
+        if current_epoch < 100:
+            # Early testing phase - use minimal resources
+            max_trials = 2
+            n_test = 1
+            print(f"Early testing phase: max_trials={max_trials}, n_test={n_test}")
+        elif current_epoch >= 200:
+            # Final optimization phase - use maximum resources
+            max_trials = 10
+            n_test = 5
+            print(f"Final optimization phase: max_trials={max_trials}, n_test={n_test}")
+        else:
+            # Production phase - use normal resources
+            max_trials = self.max_trials
+            n_test = self.n_test
+            print(f"Production phase: max_trials={max_trials}, n_test={n_test}")
+        
+        # Create a temporary optimizer with adjusted parameters
+        temp_optimizer = UCGMBayesianOptimizer(max_trials=max_trials)
+        
         def objective_function(params):
             return self.evaluate_model_with_params(params, checkpoint_path)
         
         try:
-            # Run optimization
-            result = self.optimizer.optimize(objective_function)
+            # Run optimization with temporary optimizer
+            result = temp_optimizer.optimize(objective_function)
             
             # Handle case where optimization returns None or fails
             if result is None:
@@ -405,6 +434,44 @@ class TrainingBayesianOptimizer:
                 
         except Exception as e:
             print(f"Error applying parameters to model: {e}")
+            return False
+    
+    def _is_checkpoint_valid(self, checkpoint_path: str) -> bool:
+        """
+        Check if checkpoint file is valid and not corrupted.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file
+            
+        Returns:
+            True if checkpoint is valid, False otherwise
+        """
+        try:
+            if not os.path.exists(checkpoint_path):
+                return False
+            
+            # Check file size (should be reasonable)
+            file_size = os.path.getsize(checkpoint_path)
+            if file_size < 1024:  # Less than 1KB is suspicious
+                print(f"Checkpoint file too small: {file_size} bytes")
+                return False
+            
+            # Try to load the checkpoint header
+            with open(checkpoint_path, "rb") as f:
+                # Try to read the first few bytes to check if it's a valid pickle file
+                header = f.read(4)
+                if not header:
+                    return False
+                
+                # Check if it starts with pickle magic bytes
+                if header.startswith(b'\x80\x02') or header.startswith(b'\x80\x03'):
+                    return True
+                else:
+                    print(f"Checkpoint file doesn't appear to be a valid pickle file")
+                    return False
+                    
+        except Exception as e:
+            print(f"Error checking checkpoint validity: {e}")
             return False
     
     def get_optimization_summary(self) -> Dict[str, Any]:

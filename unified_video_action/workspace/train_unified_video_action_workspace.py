@@ -510,10 +510,18 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         checkpoint_files.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoints_dir, x)), reverse=True)
                         possible_paths.append(os.path.join(checkpoints_dir, checkpoint_files[0]))
                 
+                # Wait a bit to ensure checkpoint is fully written
+                import time
+                time.sleep(3)
+                
                 for path in possible_paths:
                     if os.path.exists(path):
-                        checkpoint_path = path
-                        break
+                        # Check if checkpoint is valid before using it
+                        if self.bayesian_optimizer._is_checkpoint_valid(path):
+                            checkpoint_path = path
+                            break
+                        else:
+                            print(f"Skipping invalid checkpoint: {path}")
                 
                 if checkpoint_path and os.path.exists(checkpoint_path):
                     print(f"Using checkpoint: {checkpoint_path}")
@@ -577,10 +585,14 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     else:
                         print(f"Bayesian optimization failed at epoch {self.epoch}")
                 else:
-                    print(f"No checkpoint found for Bayesian optimization. Searched paths:")
+                    print(f"No valid checkpoint found for Bayesian optimization. Searched paths:")
                     for path in possible_paths:
-                        print(f"  - {path}")
+                        if os.path.exists(path):
+                            print(f"  - {path} (exists but invalid)")
+                        else:
+                            print(f"  - {path} (not found)")
                     print(f"Skipping Bayesian optimization at epoch {self.epoch}")
+                    print(f"Will retry at next optimization interval")
             
             policy.model.diffactloss.train()
             # policy.train()
@@ -589,6 +601,58 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
             self.epoch += 1
 
         accelerator.end_training()
+        
+        # Final Bayesian optimization after training completion
+        if (self.bayesian_optimizer is not None and 
+            accelerator.is_main_process and 
+            self.epoch >= 200):
+            
+            print(f"\n{'='*60}")
+            print(f"FINAL BAYESIAN OPTIMIZATION")
+            print(f"{'='*60}")
+            print(f"Training completed! Running final optimization with maximum resources...")
+            
+            # Get the final checkpoint
+            checkpoint_path = None
+            possible_paths = [
+                os.path.join(self.output_dir, "checkpoints", "latest.ckpt"),
+                os.path.join(self.output_dir, "checkpoints", "last.ckpt"),
+            ]
+            
+            # Also try to find any checkpoint file in the checkpoints directory
+            checkpoints_dir = os.path.join(self.output_dir, "checkpoints")
+            if os.path.exists(checkpoints_dir):
+                checkpoint_files = [f for f in os.listdir(checkpoints_dir) if f.endswith('.ckpt')]
+                if checkpoint_files:
+                    # Use the most recent checkpoint file
+                    checkpoint_files.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoints_dir, x)), reverse=True)
+                    possible_paths.append(os.path.join(checkpoints_dir, checkpoint_files[0]))
+            
+            for path in possible_paths:
+                if os.path.exists(path) and self.bayesian_optimizer._is_checkpoint_valid(path):
+                    checkpoint_path = path
+                    break
+            
+            if checkpoint_path:
+                print(f"Using final checkpoint: {checkpoint_path}")
+                # Run final optimization
+                best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch)
+                
+                if best_params:
+                    print(f"\n{'='*60}")
+                    print(f"FINAL OPTIMIZATION COMPLETED!")
+                    print(f"{'='*60}")
+                    print(f"Best parameters found: {best_params}")
+                    
+                    # Apply final parameters to model
+                    if self.bayesian_optimizer.apply_best_params_to_model(self.model, best_params):
+                        print(f"Final optimized parameters applied to model!")
+                    else:
+                        print(f"Failed to apply final optimized parameters")
+                else:
+                    print(f"Final optimization failed")
+            else:
+                print(f"No valid checkpoint found for final optimization")
         
         # Print Bayesian optimization summary if enabled
         if self.bayesian_optimizer is not None and accelerator.is_main_process:
