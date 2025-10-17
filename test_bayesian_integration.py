@@ -88,8 +88,13 @@ def test_parameter_generation():
             output_dir='./test_bayesian_logs'
         )
         
+        # Create a mock trial for testing
+        import optuna
+        study = optuna.create_study(direction='maximize')
+        trial = study.ask()
+        
         # Test parameter generation
-        params = optimizer.optimizer.optimize_params(None)
+        params = optimizer.optimizer.optimize_params(trial)
         
         # Check required parameters
         required_params = [
