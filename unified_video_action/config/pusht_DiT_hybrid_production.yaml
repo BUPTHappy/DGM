@@ -84,5 +84,5 @@ bayesian_optimization:
   interval: 20     # 每20个epoch优化一次
   max_trials: 6    # 正常优化用6个trial（早期测试会自动用2个）
   n_test: 3        # 正常优化用3个test（早期测试会自动用1个）
-  device: cuda:1
+  device: cuda:0
   output_dir: ./bayesian_optimization_logs
