@@ -664,6 +664,13 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     # Apply final parameters to model
                     if self.bayesian_optimizer.apply_best_params_to_model(self.model, best_params):
                         print(f"Final optimized parameters applied to model!")
+                        
+                        # Save the final optimized model with a special name
+                        final_model_path = os.path.join(self.output_dir, "checkpoints", 
+                                                      f"final_optimized_model_score={self.bayesian_optimizer.best_score:.3f}.ckpt")
+                        print(f"Saving final optimized model to: {final_model_path}")
+                        self.save_checkpoint(path=final_model_path)
+                        print(f"✓ Final optimized model saved successfully!")
                     else:
                         print(f"Failed to apply final optimized parameters")
                 else:
