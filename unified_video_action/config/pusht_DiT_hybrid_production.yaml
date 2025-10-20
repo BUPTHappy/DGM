@@ -80,9 +80,12 @@ save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
 # Bayesian Optimization Configuration for Production
 bayesian_optimization:
   enabled: true
-  start_epoch: 70   # 从Epoch 50开始，第70个epoch进行早期测试
-  interval: 20     # 每20个epoch优化一次
-  max_trials: 6    # 正常优化用6个trial（早期测试会自动用2个）
-  n_test: 3        # 正常优化用3个test（早期测试会自动用1个）
+  start_epoch: 150  # 从3/4位置开始（200*3/4=150），确保训练稳定性
+  interval: 10      # 每10个epoch优化一次，更频繁的优化
+  max_trials: 8     # 中期优化用8个trials
+  final_trials: 15  # 最终优化用15个trials
+  n_test: 3         # 正常优化用3个test
+  final_n_test: 5   # 最终优化用5个test，更充分的评估
   device: cuda:0
   output_dir: ./bayesian_optimization_logs
+  use_best_checkpoint_for_final: true  # 最终优化使用最优checkpoint

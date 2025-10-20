@@ -24,12 +24,15 @@ class TrainingBayesianOptimizer:
     
     def __init__(self, 
                  config: OmegaConf,
-                 start_epoch: int = 100,  # Start optimization after 50% of training
-                 interval: int = 10,      # Optimize every 10 epochs
-                 max_trials: int = 15,    # Reduced trials for training integration
-                 n_test: int = 5,         # Reduced test count for faster evaluation
+                 start_epoch: int = 150,  # Start optimization at 3/4 of training
+                 interval: int = 10,       # Optimize every 10 epochs
+                 max_trials: int = 8,      # Normal trials for mid-training
+                 final_trials: int = 15,   # Final optimization trials
+                 n_test: int = 3,          # Normal test count
+                 final_n_test: int = 5,    # Final optimization test count
                  device: str = "cuda:0",
-                 output_dir: str = "./bayesian_optimization_logs"):
+                 output_dir: str = "./bayesian_optimization_logs",
+                 use_best_checkpoint_for_final: bool = True):
         """
         Initialize the training-integrated Bayesian optimizer.
         
@@ -37,18 +40,24 @@ class TrainingBayesianOptimizer:
             config: Training configuration
             start_epoch: Epoch to start Bayesian optimization
             interval: Interval between optimization runs
-            max_trials: Maximum trials per optimization run
-            n_test: Number of test runs per evaluation
+            max_trials: Maximum trials per optimization run (normal phase)
+            final_trials: Maximum trials for final optimization
+            n_test: Number of test runs per evaluation (normal phase)
+            final_n_test: Number of test runs for final optimization
             device: Device for evaluation
             output_dir: Output directory for optimization logs
+            use_best_checkpoint_for_final: Whether to use best checkpoint for final optimization
         """
         self.config = config
         self.start_epoch = start_epoch
         self.interval = interval
         self.max_trials = max_trials
+        self.final_trials = final_trials
         self.n_test = n_test
+        self.final_n_test = final_n_test
         self.device = device
         self.output_dir = output_dir
+        self.use_best_checkpoint_for_final = use_best_checkpoint_for_final
         
         # Create output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -64,13 +73,58 @@ class TrainingBayesianOptimizer:
         print(f"TrainingBayesianOptimizer initialized:")
         print(f"  Start epoch: {start_epoch}")
         print(f"  Interval: {interval}")
-        print(f"  Max trials: {max_trials}")
+        print(f"  Max trials (normal): {max_trials}")
+        print(f"  Max trials (final): {final_trials}")
+        print(f"  N test (normal): {n_test}")
+        print(f"  N test (final): {final_n_test}")
+        print(f"  Use best checkpoint for final: {use_best_checkpoint_for_final}")
         print(f"  Output dir: {output_dir}")
     
     def should_optimize(self, current_epoch: int) -> bool:
         """Check if optimization should be performed at current epoch."""
         return (current_epoch >= self.start_epoch and 
                 (current_epoch - self.start_epoch) % self.interval == 0)
+    
+    def find_best_checkpoint(self, checkpoints_dir: str) -> Optional[str]:
+        """
+        Find the best checkpoint based on test_mean_score.
+        
+        Args:
+            checkpoints_dir: Directory containing checkpoints
+            
+        Returns:
+            Path to the best checkpoint, or None if not found
+        """
+        if not os.path.exists(checkpoints_dir):
+            return None
+            
+        checkpoint_files = [f for f in os.listdir(checkpoints_dir) if f.endswith('.ckpt')]
+        if not checkpoint_files:
+            return None
+        
+        best_score = -float('inf')
+        best_checkpoint = None
+        
+        for checkpoint_file in checkpoint_files:
+            # Extract score from filename if possible
+            if 'test_mean_score=' in checkpoint_file:
+                try:
+                    # Extract score from filename like "epoch=XXXX-test_mean_score=X.XXX.ckpt"
+                    score_str = checkpoint_file.split('test_mean_score=')[1].split('.ckpt')[0]
+                    score = float(score_str)
+                    
+                    if score > best_score:
+                        best_score = score
+                        best_checkpoint = os.path.join(checkpoints_dir, checkpoint_file)
+                except (ValueError, IndexError):
+                    continue
+        
+        if best_checkpoint:
+            print(f"Found best checkpoint: {best_checkpoint} (score: {best_score:.3f})")
+        else:
+            print(f"No best checkpoint found in {checkpoints_dir}")
+            
+        return best_checkpoint
     
     def evaluate_model_with_params(self, 
                                  params: Dict[str, Any], 
@@ -209,13 +263,15 @@ class TrainingBayesianOptimizer:
     
     def run_optimization(self, 
                         checkpoint_path: str, 
-                        current_epoch: int) -> Optional[Dict[str, Any]]:
+                        current_epoch: int,
+                        checkpoints_dir: str = None) -> Optional[Dict[str, Any]]:
         """
         Run Bayesian optimization for current epoch.
         
         Args:
             checkpoint_path: Path to current checkpoint
             current_epoch: Current training epoch
+            checkpoints_dir: Directory containing checkpoints (for finding best checkpoint)
             
         Returns:
             Best parameters found, or None if optimization failed
@@ -225,22 +281,35 @@ class TrainingBayesianOptimizer:
         print(f"Checkpoint: {checkpoint_path}")
         print(f"{'='*60}")
         
-        # Adjust optimization parameters based on epoch
-        if current_epoch < 100:
-            # Early testing phase - use minimal resources
-            max_trials = 2
-            n_test = 1
-            print(f"Early testing phase: max_trials={max_trials}, n_test={n_test}")
-        elif current_epoch >= 200:
+        # For final optimization, use best checkpoint if available
+        total_epochs = self.config.training.num_epochs
+        is_final_optimization = current_epoch >= total_epochs - 5
+        
+        if is_final_optimization and self.use_best_checkpoint_for_final and checkpoints_dir:
+            best_checkpoint = self.find_best_checkpoint(checkpoints_dir)
+            if best_checkpoint and best_checkpoint != checkpoint_path:
+                print(f"Using best checkpoint for final optimization: {best_checkpoint}")
+                checkpoint_path = best_checkpoint
+        
+        # Adjust optimization parameters based on epoch (progressive strategy)
+        total_epochs = self.config.training.num_epochs
+        progress = current_epoch / total_epochs
+        
+        if current_epoch >= total_epochs - 5:
             # Final optimization phase - use maximum resources
-            max_trials = 10
-            n_test = 5
+            max_trials = self.final_trials
+            n_test = self.final_n_test
             print(f"Final optimization phase: max_trials={max_trials}, n_test={n_test}")
+        elif progress >= 0.9:
+            # Near-final phase - increase resources
+            max_trials = int(self.max_trials * 1.5)
+            n_test = int(self.n_test * 1.5)
+            print(f"Near-final phase: max_trials={max_trials}, n_test={n_test}")
         else:
-            # Production phase - use normal resources
+            # Normal phase - use standard resources
             max_trials = self.max_trials
             n_test = self.n_test
-            print(f"Production phase: max_trials={max_trials}, n_test={n_test}")
+            print(f"Normal phase: max_trials={max_trials}, n_test={n_test}")
         
         # Create a temporary optimizer with adjusted parameters
         temp_optimizer = UCGMBayesianOptimizer(max_trials=max_trials)

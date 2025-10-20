@@ -90,9 +90,12 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                 start_epoch=cfg.bayesian_optimization.start_epoch,
                 interval=cfg.bayesian_optimization.interval,
                 max_trials=cfg.bayesian_optimization.max_trials,
+                final_trials=cfg.bayesian_optimization.final_trials,
                 n_test=cfg.bayesian_optimization.n_test,
+                final_n_test=cfg.bayesian_optimization.final_n_test,
                 device=cfg.bayesian_optimization.device,
-                output_dir=cfg.bayesian_optimization.output_dir
+                output_dir=cfg.bayesian_optimization.output_dir,
+                use_best_checkpoint_for_final=cfg.bayesian_optimization.use_best_checkpoint_for_final
             )
             print(f"Bayesian optimization enabled: start_epoch={cfg.bayesian_optimization.start_epoch}, interval={cfg.bayesian_optimization.interval}")
             
@@ -538,7 +541,8 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                 if checkpoint_path and os.path.exists(checkpoint_path):
                     print(f"Using checkpoint: {checkpoint_path}")
                     # Run Bayesian optimization
-                    best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch)
+                    checkpoints_dir = os.path.join(self.output_dir, "checkpoints")
+                    best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch, checkpoints_dir)
                     
                     if best_params is not None:
                         # Apply best parameters to model
