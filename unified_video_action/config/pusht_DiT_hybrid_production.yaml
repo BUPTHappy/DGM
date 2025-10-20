@@ -72,7 +72,7 @@ multi_run:
   run_dir: data/outputs/train_uva_pusht_bayesian_production_resume
   wandb_name_base: train_uva_pusht_bayesian_production_resume
 
-payload: /home/zhuliu/workspace/Towards-Generalizable-Embodied-AI-via-Diffusion-Based-Robotic-Policies/checkpoints/pusht_production_resume/checkpoints/epoch=0060-test_mean_score=0.987.ckpt
+payload: /home/zhuliu/workspace/Towards-Generalizable-Embodied-AI-via-Diffusion-Based-Robotic-Policies/checkpoints/pusht.ckpt
 freeze_submodules: true
 
 save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
