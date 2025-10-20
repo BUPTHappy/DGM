@@ -106,6 +106,10 @@ class TrainingBayesianOptimizer:
         best_checkpoint = None
         
         for checkpoint_file in checkpoint_files:
+            # Skip latest.ckpt as it's not performance-based
+            if checkpoint_file == 'latest.ckpt':
+                continue
+                
             # Extract score from filename if possible
             if 'test_mean_score=' in checkpoint_file:
                 try:

@@ -652,7 +652,8 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
             if checkpoint_path:
                 print(f"Using final checkpoint: {checkpoint_path}")
                 # Run final optimization
-                best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch)
+                checkpoints_dir = os.path.join(self.output_dir, "checkpoints")
+                best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch, checkpoints_dir)
                 
                 if best_params:
                     print(f"\n{'='*60}")
