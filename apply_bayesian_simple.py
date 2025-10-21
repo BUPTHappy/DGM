@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Script to manually apply Bayesian optimization parameters to an existing checkpoint.
-This creates a new checkpoint with the optimized parameters.
+Simple script to apply Bayesian optimization parameters to checkpoint.
 """
 
 import os
@@ -11,19 +10,34 @@ import dill
 import json
 from omegaconf import OmegaConf, open_dict
 
-def apply_bayesian_params_to_checkpoint(input_checkpoint_path, output_checkpoint_path, bayesian_params):
-    """
-    Apply Bayesian optimization parameters to a checkpoint and save as new checkpoint.
+def main():
+    # Bayesian optimization results from your training
+    bayesian_params = {
+        'consistc_ratio': 0.9870031611149999,
+        'rfba_gap_end': 0.22533496150457658,
+        'temperature': 0.8836599795042932,
+        'num_sampling_steps': 2,
+        'cfg': 1.0260267723044316,
+        'extrapol_ratio': 0.5318789824701121,
+        'window_size': 8,
+        'lambda_local': 0.3566535175072145,
+        'ucgmts_config': {
+            'transport_type': 'Linear',
+            'consistc_ratio': 0.9870031611149999,
+            'scaled_cbl_eps': 0.0,
+            'ema_decay_rate': 0.0,
+            'rfba_gap_steps': [0.001, 0.22533496150457658],
+            'extrapol_ratio': 0.5318789824701121
+        }
+    }
     
-    Args:
-        input_checkpoint_path: Path to original checkpoint
-        output_checkpoint_path: Path to save new checkpoint with optimized parameters
-        bayesian_params: Dictionary containing optimized parameters
-    """
-    print(f"Loading checkpoint: {input_checkpoint_path}")
+    input_checkpoint = "checkpoints/pusht_production_opt/checkpoints/epoch=0050-test_mean_score=0.991.ckpt"
+    output_checkpoint = "checkpoints/pusht_production_opt/checkpoints/epoch=0050-test_mean_score=0.991_optimized.ckpt"
+    
+    print(f"Loading checkpoint: {input_checkpoint}")
     
     # Load original checkpoint
-    payload = torch.load(open(input_checkpoint_path, "rb"), pickle_module=dill, weights_only=False)
+    payload = torch.load(open(input_checkpoint, "rb"), pickle_module=dill, weights_only=False)
     cfg = payload["cfg"]
     
     print("Original parameters:")
@@ -35,6 +49,7 @@ def apply_bayesian_params_to_checkpoint(input_checkpoint_path, output_checkpoint
     
     # Update config with Bayesian optimization parameters
     with open_dict(cfg.model.policy.autoregressive_model_params):
+        # Ensure ucgmts_config exists
         if "ucgmts_config" not in cfg.model.policy.autoregressive_model_params:
             cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
         
@@ -72,74 +87,23 @@ def apply_bayesian_params_to_checkpoint(input_checkpoint_path, output_checkpoint
     payload["cfg"] = cfg
     
     # Save new checkpoint
-    print(f"\nSaving optimized checkpoint to: {output_checkpoint_path}")
-    os.makedirs(os.path.dirname(output_checkpoint_path), exist_ok=True)
-    torch.save(payload, open(output_checkpoint_path, "wb"), pickle_module=dill)
+    print(f"\nSaving optimized checkpoint to: {output_checkpoint}")
+    os.makedirs(os.path.dirname(output_checkpoint), exist_ok=True)
+    torch.save(payload, open(output_checkpoint, "wb"), pickle_module=dill)
     
     print("✓ Successfully created checkpoint with Bayesian optimization parameters!")
-    return True
-
-def main():
-    import argparse
     
-    parser = argparse.ArgumentParser(description='Apply Bayesian optimization parameters to checkpoint')
-    parser.add_argument('--input_checkpoint', required=True, help='Path to input checkpoint')
-    parser.add_argument('--output_checkpoint', required=True, help='Path to output checkpoint')
-    parser.add_argument('--bayesian_log', help='Path to Bayesian optimization log file (optional)')
-    
-    args = parser.parse_args()
-    
-    # Bayesian optimization results from your training
-    bayesian_params = {
-        'consistc_ratio': 0.9870031611149999,
-        'rfba_gap_end': 0.22533496150457658,
-        'temperature': 0.8836599795042932,
-        'num_sampling_steps': 2,
-        'cfg': 1.0260267723044316,
-        'extrapol_ratio': 0.5318789824701121,
-        'window_size': 8,
-        'lambda_local': 0.3566535175072145,
-        'ucgmts_config': {
-            'transport_type': 'Linear',
-            'consistc_ratio': 0.9870031611149999,
-            'scaled_cbl_eps': 0.0,
-            'ema_decay_rate': 0.0,
-            'rfba_gap_steps': [0.001, 0.22533496150457658],
-            'extrapol_ratio': 0.5318789824701121
-        }
-    }
-    
-    # Try to load parameters from Bayesian optimization log if provided
-    if args.bayesian_log and os.path.exists(args.bayesian_log):
-        try:
-            with open(args.bayesian_log, 'r') as f:
-                log_data = json.load(f)
-                if 'best_params' in log_data:
-                    bayesian_params = log_data['best_params']
-                    print(f"Loaded parameters from: {args.bayesian_log}")
-        except Exception as e:
-            print(f"Failed to load from log file: {e}")
-            print("Using default parameters")
-    
-    # Use provided paths
-    input_checkpoint = args.input_checkpoint
-    output_checkpoint = args.output_checkpoint
-    
-    # Apply parameters
-    success = apply_bayesian_params_to_checkpoint(input_checkpoint, output_checkpoint, bayesian_params)
-    
-    if success:
-        print(f"\n{'='*60}")
-        print("SUCCESS!")
-        print(f"{'='*60}")
-        print(f"Original checkpoint: {input_checkpoint}")
-        print(f"Optimized checkpoint: {output_checkpoint}")
-        print(f"Expected performance: 0.9919")
-        print(f"\nYou can now evaluate the optimized checkpoint:")
-        print(f"CUDA_VISIBLE_DEVICES=0 python eval_sim.py \\")
-        print(f"    --checkpoint {output_checkpoint} \\")
-        print(f"    --output_dir checkpoints/pusht_optimized_eval/")
-        print(f"{'='*60}")
+    print(f"\n{'='*60}")
+    print("SUCCESS!")
+    print(f"{'='*60}")
+    print(f"Original checkpoint: {input_checkpoint}")
+    print(f"Optimized checkpoint: {output_checkpoint}")
+    print(f"Expected performance: 0.9919")
+    print(f"\nYou can now evaluate the optimized checkpoint:")
+    print(f"CUDA_VISIBLE_DEVICES=0 python eval_sim.py \\")
+    print(f"    --checkpoint {output_checkpoint} \\")
+    print(f"    --output_dir checkpoints/pusht_optimized_eval/")
+    print(f"{'='*60}")
 
 if __name__ == "__main__":
     main()
