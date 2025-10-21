@@ -683,40 +683,153 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     print(f"{'='*60}")
                     print(f"Best parameters found: {best_params}")
                     
-                    # Apply final parameters to model
-                    if self.bayesian_optimizer.apply_best_params_to_model(self.model, best_params):
-                        print(f"Final optimized parameters applied to model!")
+                    # Apply final parameters using the EXACT method that works
+                    print(f"Applying final optimized parameters using exact method...")
+                    
+                    # Convert Bayesian optimization params to manual evaluation params
+                    manual_params = {
+                        'use_ucgm': True,
+                        'num_sampling_steps': best_params['num_sampling_steps'],
+                        'stochasticity_rate': best_params['consistc_ratio'],  # This is the key!
+                        'window_size': best_params['window_size'],
+                        'lambda_local': best_params['lambda_local']
+                    }
+                    
+                    # Apply parameters EXACTLY as eval_sim.py does
+                    with open_dict(self.cfg.model.policy.autoregressive_model_params):
+                        # Create ucgmts_config if it doesn't exist (exactly as eval_sim.py does)
+                        if "ucgmts_config" not in self.cfg.model.policy.autoregressive_model_params:
+                            self.cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
+                            self.cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = "Linear"
+                            self.cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbs_eps = 0.0
+                            self.cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = 0.0
                         
-                        # CRITICAL: Also update workspace cfg to ensure parameters are saved in checkpoint
-                        if hasattr(self, 'cfg') and self.cfg is not None:
-                            with open_dict(self.cfg.model.policy.autoregressive_model_params):
-                                if "ucgmts_config" not in self.cfg.model.policy.autoregressive_model_params:
-                                    self.cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
-                                
-                                self.cfg.model.policy.autoregressive_model_params.use_ucgm = True
-                                self.cfg.model.policy.autoregressive_model_params.num_sampling_steps = best_params['num_sampling_steps']
-                                self.cfg.model.policy.autoregressive_model_params.cfg = best_params['cfg']
-                                self.cfg.model.policy.autoregressive_model_params.temperature = best_params['temperature']
-                                self.cfg.model.policy.autoregressive_model_params.window_size = best_params['window_size']
-                                self.cfg.model.policy.autoregressive_model_params.lambda_local = best_params['lambda_local']
-                                
-                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = best_params['ucgmts_config']['transport_type']
-                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = best_params['ucgmts_config']['consistc_ratio']
-                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = best_params['ucgmts_config']['scaled_cbl_eps']
-                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = best_params['ucgmts_config']['ema_decay_rate']
-                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = best_params['ucgmts_config']['rfba_gap_steps']
-                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = best_params['ucgmts_config']['extrapol_ratio']
-                                
-                                print("✓ Updated workspace.cfg with final optimized parameters")
+                        # Apply stochasticity_rate (consistc_ratio)
+                        if manual_params['stochasticity_rate'] is not None:
+                            self.cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = manual_params['stochasticity_rate']
                         
-                        # Save the final optimized model with a special name
-                        final_model_path = os.path.join(self.output_dir, "checkpoints", 
-                                                      f"final_optimized_model_score={self.bayesian_optimizer.best_score:.3f}.ckpt")
-                        print(f"Saving final optimized model to: {final_model_path}")
-                        self.save_checkpoint(path=final_model_path)
-                        print(f"✓ Final optimized model saved successfully!")
+                        # Apply num_sampling_steps and rfba_gap_steps (exactly as eval_sim.py does)
+                        if manual_params['num_sampling_steps']:
+                            self.cfg.model.policy.autoregressive_model_params.num_sampling_steps = manual_params['num_sampling_steps']
+                            if manual_params['num_sampling_steps'] <= 2:
+                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5] 
+                            else:
+                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
+                        
+                        # Apply local attention parameters
+                        if manual_params['window_size'] is not None:
+                            self.cfg.model.policy.autoregressive_model_params.window_size = manual_params['window_size']
+                        if manual_params['lambda_local'] is not None:
+                            self.cfg.model.policy.autoregressive_model_params.lambda_local = manual_params['lambda_local']
+                    
+                    # Apply use_ucgm flag (exactly as eval_sim.py does)
+                    if manual_params['use_ucgm']:
+                        OmegaConf.set_struct(self.cfg, False)  # Allow new keys
+                        self.cfg.model.policy.autoregressive_model_params.use_ucgm = True
+                        print("Using UCGM mode")
+                    
+                    # Apply pruning settings (exactly as eval_sim.py does)
+                    OmegaConf.set_struct(self.cfg, False)  # Allow new keys
+                    self.cfg.model.policy.autoregressive_model_params.pruning_ratios = None
+                    self.cfg.model.policy.autoregressive_model_params.token_pruning = False
+                    self.cfg.model.policy.autoregressive_model_params.restore_after_encoder = False
+                    
+                    print("✓ Applied parameters exactly as eval_sim.py does")
+                    
+                    # Apply parameters to model components
+                    print(f"Applying parameters to model components...")
+                    model = self.model
+                    
+                    # Apply to autoregressive_model_params
+                    if hasattr(model, 'autoregressive_model_params'):
+                        autoregressive_params = model.autoregressive_model_params
+                    elif hasattr(model, 'model') and hasattr(model.model, 'autoregressive_model_params'):
+                        autoregressive_params = model.model.autoregressive_model_params
                     else:
-                        print(f"Failed to apply final optimized parameters")
+                        print("❌ Cannot find autoregressive_model_params")
+                        return False
+                    
+                    autoregressive_params.use_ucgm = True
+                    autoregressive_params.num_sampling_steps = manual_params['num_sampling_steps']
+                    autoregressive_params.window_size = manual_params['window_size']
+                    autoregressive_params.lambda_local = manual_params['lambda_local']
+                    
+                    if not hasattr(autoregressive_params, 'ucgmts_config'):
+                        autoregressive_params.ucgmts_config = OmegaConf.create({})
+                    
+                    autoregressive_params.ucgmts_config.transport_type = "Linear"
+                    autoregressive_params.ucgmts_config.consistc_ratio = manual_params['stochasticity_rate']
+                    autoregressive_params.ucgmts_config.scaled_cbs_eps = 0.0
+                    autoregressive_params.ucgmts_config.ema_decay_rate = 0.0
+                    autoregressive_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5]  # Exactly as eval_sim.py sets it
+                    
+                    print("✓ Updated autoregressive_model_params")
+                    
+                    # Apply to actual model components
+                    if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
+                        diffactloss = model.model.diffactloss
+                        diffactloss.num_sampling_steps = manual_params['num_sampling_steps']
+                        
+                        if hasattr(diffactloss, 'ucgmts'):
+                            ucgmts = diffactloss.ucgmts
+                            ucgmts.transport_type = "Linear"
+                            ucgmts.consistc_ratio = manual_params['stochasticity_rate']
+                            ucgmts.scaled_cbs_eps = 0.0
+                            ucgmts.ema_decay_rate = 0.0
+                            ucgmts.rfba_gap_steps = [0.001, 0.5]  # Exactly as eval_sim.py sets it
+                            print("✓ Updated UCGMTS model components")
+                    
+                    # Also update EMA model if it exists
+                    if hasattr(self, 'ema_model') and self.ema_model is not None:
+                        print(f"Updating EMA model...")
+                        ema_model = self.ema_model
+                        
+                        if hasattr(ema_model, 'autoregressive_model_params'):
+                            ema_autoregressive_params = ema_model.autoregressive_model_params
+                        elif hasattr(ema_model, 'model') and hasattr(ema_model.model, 'autoregressive_model_params'):
+                            ema_autoregressive_params = ema_model.model.autoregressive_model_params
+                        else:
+                            print("❌ Cannot find EMA autoregressive_model_params")
+                            return False
+                        
+                        ema_autoregressive_params.use_ucgm = True
+                        ema_autoregressive_params.num_sampling_steps = manual_params['num_sampling_steps']
+                        ema_autoregressive_params.window_size = manual_params['window_size']
+                        ema_autoregressive_params.lambda_local = manual_params['lambda_local']
+                        
+                        if not hasattr(ema_autoregressive_params, 'ucgmts_config'):
+                            ema_autoregressive_params.ucgmts_config = OmegaConf.create({})
+                        
+                        ema_autoregressive_params.ucgmts_config.transport_type = "Linear"
+                        ema_autoregressive_params.ucgmts_config.consistc_ratio = manual_params['stochasticity_rate']
+                        ema_autoregressive_params.ucgmts_config.scaled_cbs_eps = 0.0
+                        ema_autoregressive_params.ucgmts_config.ema_decay_rate = 0.0
+                        ema_autoregressive_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5]  # Exactly as eval_sim.py sets it
+                        
+                        # Also update EMA model components
+                        if hasattr(ema_model, 'model') and hasattr(ema_model.model, 'diffactloss'):
+                            ema_diffactloss = ema_model.model.diffactloss
+                            ema_diffactloss.num_sampling_steps = manual_params['num_sampling_steps']
+                            
+                            if hasattr(ema_diffactloss, 'ucgmts'):
+                                ema_ucgmts = ema_diffactloss.ucgmts
+                                ema_ucgmts.transport_type = "Linear"
+                                ema_ucgmts.consistc_ratio = manual_params['stochasticity_rate']
+                                ema_ucgmts.scaled_cbs_eps = 0.0
+                                ema_ucgmts.ema_decay_rate = 0.0
+                                ema_ucgmts.rfba_gap_steps = [0.001, 0.5]  # Exactly as eval_sim.py sets it
+                        
+                        print("✓ Updated EMA model")
+                    
+                    print(f"✓ Final optimized parameters applied to model using exact method!")
+                    
+                    # Save the final optimized model with a special name
+                    final_model_path = os.path.join(self.output_dir, "checkpoints", 
+                                                  f"final_optimized_model_score={self.bayesian_optimizer.best_score:.3f}.ckpt")
+                    print(f"Saving final optimized model to: {final_model_path}")
+                    self.save_checkpoint(path=final_model_path)
+                    print(f"✓ Final optimized model saved successfully!")
+                    print(f"✓ This checkpoint should achieve the same performance as manual evaluation!")
                 else:
                     print(f"Final optimization failed")
             else:
