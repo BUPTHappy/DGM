@@ -30,7 +30,7 @@ def check_checkpoint_params(checkpoint_path):
         print(f"    scaled_cbl_eps: {params.ucgmts_config.scaled_cbl_eps}")
         print(f"    ema_decay_rate: {params.ucgmts_config.ema_decay_rate}")
         print(f"    rfba_gap_steps: {params.ucgmts_config.rfba_gap_steps}")
-        print(f"    extrapol_ratio: {params.ucgmts_config.extrapol_ratio}")
+        print(f"    extrapol_ratio: {getattr(params.ucgmts_config, 'extrapol_ratio', 'N/A')}")
     else:
         print("  ucgmts_config: Not found or empty")
 
