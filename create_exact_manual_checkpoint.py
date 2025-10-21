@@ -93,9 +93,9 @@ def create_exact_manual_params_checkpoint():
     print(f"  ucgmts_config:")
     print(f"    transport_type: {params.ucgmts_config.transport_type}")
     print(f"    consistc_ratio: {params.ucgmts_config.consistc_ratio}")
-    print(f"    scaled_cbs_eps: {params.ucgmts_config.scaled_cbs_eps}")
-    print(f"    ema_decay_rate: {params.ucgmts_config.ema_decay_rate}")
-    print(f"    rfba_gap_steps: {params.ucgmts_config.rfba_gap_steps}")
+    print(f"    scaled_cbs_eps: {getattr(params.ucgmts_config, 'scaled_cbs_eps', 'N/A')}")
+    print(f"    ema_decay_rate: {getattr(params.ucgmts_config, 'ema_decay_rate', 'N/A')}")
+    print(f"    rfba_gap_steps: {getattr(params.ucgmts_config, 'rfba_gap_steps', 'N/A')}")
     
     # Create workspace with updated config
     print(f"\nCreating workspace with exact manual parameters...")
