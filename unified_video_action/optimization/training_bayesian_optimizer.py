@@ -431,41 +431,72 @@ class TrainingBayesianOptimizer:
                         print(f"  extrapol_ratio: {getattr(ucgmts, 'extrapol_ratio', 'N/A')}")
             
             # Update model parameters
+            # Check if model has autoregressive_model_params attribute
             if hasattr(model, 'autoregressive_model_params'):
                 autoregressive_params = model.autoregressive_model_params
+            elif hasattr(model, 'model') and hasattr(model.model, 'autoregressive_model_params'):
+                # Handle case where model is wrapped (e.g., DDP wrapper)
+                autoregressive_params = model.model.autoregressive_model_params
+            else:
+                print(f"Model type: {type(model)}")
+                print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
+                print("Model does not have autoregressive_model_params attribute")
+                return False
+            
+            # Update UCGM parameters
+            autoregressive_params.use_ucgm = True
+            autoregressive_params.num_sampling_steps = params['num_sampling_steps']
+            autoregressive_params.cfg = params['cfg']
+            autoregressive_params.temperature = params['temperature']
+            autoregressive_params.window_size = params['window_size']
+            autoregressive_params.lambda_local = params['lambda_local']
+            
+            # Update UCGMTS config
+            if not hasattr(autoregressive_params, 'ucgmts_config'):
+                autoregressive_params.ucgmts_config = OmegaConf.create({})
+            
+            autoregressive_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
+            autoregressive_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
+            autoregressive_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
+            autoregressive_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
+            autoregressive_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+            autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+            
+            # Also update the actual model components
+            if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
+                diffactloss = model.model.diffactloss
+                diffactloss.num_sampling_steps = params['num_sampling_steps']
                 
-                # Update UCGM parameters
-                autoregressive_params.use_ucgm = True
-                autoregressive_params.num_sampling_steps = params['num_sampling_steps']
-                autoregressive_params.cfg = params['cfg']
-                autoregressive_params.temperature = params['temperature']
-                autoregressive_params.window_size = params['window_size']
-                autoregressive_params.lambda_local = params['lambda_local']
-                
-                # Update UCGMTS config
-                if not hasattr(autoregressive_params, 'ucgmts_config'):
-                    autoregressive_params.ucgmts_config = OmegaConf.create({})
-                
-                autoregressive_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
-                autoregressive_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
-                autoregressive_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
-                autoregressive_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
-                autoregressive_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
-                autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
-                
-                # Also update the actual model components
-                if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
-                    diffactloss = model.model.diffactloss
-                    diffactloss.num_sampling_steps = params['num_sampling_steps']
+                if hasattr(diffactloss, 'ucgmts'):
+                    ucgmts = diffactloss.ucgmts
+                    ucgmts.transport_type = params['ucgmts_config']['transport_type']
+                    ucgmts.consistc_ratio = params['ucgmts_config']['consistc_ratio']
+                    ucgmts.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
+                    ucgmts.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
+                    ucgmts.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+                    ucgmts.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+            
+            # CRITICAL: Also update the config to ensure parameters are saved in checkpoint
+            if hasattr(model, 'cfg') and model.cfg is not None:
+                with open_dict(model.cfg.model.policy.autoregressive_model_params):
+                    if "ucgmts_config" not in model.cfg.model.policy.autoregressive_model_params:
+                        model.cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
                     
-                    if hasattr(diffactloss, 'ucgmts'):
-                        ucgmts = diffactloss.ucgmts
-                        ucgmts.transport_type = params['ucgmts_config']['transport_type']
-                        ucgmts.consistc_ratio = params['ucgmts_config']['consistc_ratio']
-                        ucgmts.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
-                        ucgmts.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
-                        ucgmts.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
-                        ucgmts.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    model.cfg.model.policy.autoregressive_model_params.use_ucgm = True
+                    model.cfg.model.policy.autoregressive_model_params.num_sampling_steps = params['num_sampling_steps']
+                    model.cfg.model.policy.autoregressive_model_params.cfg = params['cfg']
+                    model.cfg.model.policy.autoregressive_model_params.temperature = params['temperature']
+                    model.cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
+                    model.cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
+                    
+                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
+                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
+                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
+                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
+                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    
+                    print("✓ Updated model.cfg with optimized parameters")
                 
                 # Print updated model parameters
                 print(f"\n{'='*50}")

@@ -11,7 +11,7 @@ import os
 import hydra
 import math
 import torch
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, open_dict
 import pathlib
 import copy
 import random
@@ -555,6 +555,28 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         if success:
                             print(f"Successfully applied optimized parameters to model")
                             
+                            # CRITICAL: Also update workspace cfg to ensure parameters are saved in checkpoint
+                            if hasattr(self, 'cfg') and self.cfg is not None:
+                                with open_dict(self.cfg.model.policy.autoregressive_model_params):
+                                    if "ucgmts_config" not in self.cfg.model.policy.autoregressive_model_params:
+                                        self.cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
+                                    
+                                    self.cfg.model.policy.autoregressive_model_params.use_ucgm = True
+                                    self.cfg.model.policy.autoregressive_model_params.num_sampling_steps = best_params['num_sampling_steps']
+                                    self.cfg.model.policy.autoregressive_model_params.cfg = best_params['cfg']
+                                    self.cfg.model.policy.autoregressive_model_params.temperature = best_params['temperature']
+                                    self.cfg.model.policy.autoregressive_model_params.window_size = best_params['window_size']
+                                    self.cfg.model.policy.autoregressive_model_params.lambda_local = best_params['lambda_local']
+                                    
+                                    self.cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = best_params['ucgmts_config']['transport_type']
+                                    self.cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = best_params['ucgmts_config']['consistc_ratio']
+                                    self.cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = best_params['ucgmts_config']['scaled_cbl_eps']
+                                    self.cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = best_params['ucgmts_config']['ema_decay_rate']
+                                    self.cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = best_params['ucgmts_config']['rfba_gap_steps']
+                                    self.cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = best_params['ucgmts_config']['extrapol_ratio']
+                                    
+                                    print("✓ Updated workspace.cfg with optimized parameters")
+                            
                             # Verify parameters were actually applied by checking the model
                             print(f"\n{'='*50}")
                             print(f"VERIFICATION: Checking model parameters after application:")
@@ -664,6 +686,28 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     # Apply final parameters to model
                     if self.bayesian_optimizer.apply_best_params_to_model(self.model, best_params):
                         print(f"Final optimized parameters applied to model!")
+                        
+                        # CRITICAL: Also update workspace cfg to ensure parameters are saved in checkpoint
+                        if hasattr(self, 'cfg') and self.cfg is not None:
+                            with open_dict(self.cfg.model.policy.autoregressive_model_params):
+                                if "ucgmts_config" not in self.cfg.model.policy.autoregressive_model_params:
+                                    self.cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
+                                
+                                self.cfg.model.policy.autoregressive_model_params.use_ucgm = True
+                                self.cfg.model.policy.autoregressive_model_params.num_sampling_steps = best_params['num_sampling_steps']
+                                self.cfg.model.policy.autoregressive_model_params.cfg = best_params['cfg']
+                                self.cfg.model.policy.autoregressive_model_params.temperature = best_params['temperature']
+                                self.cfg.model.policy.autoregressive_model_params.window_size = best_params['window_size']
+                                self.cfg.model.policy.autoregressive_model_params.lambda_local = best_params['lambda_local']
+                                
+                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = best_params['ucgmts_config']['transport_type']
+                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = best_params['ucgmts_config']['consistc_ratio']
+                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = best_params['ucgmts_config']['scaled_cbl_eps']
+                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = best_params['ucgmts_config']['ema_decay_rate']
+                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = best_params['ucgmts_config']['rfba_gap_steps']
+                                self.cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = best_params['ucgmts_config']['extrapol_ratio']
+                                
+                                print("✓ Updated workspace.cfg with final optimized parameters")
                         
                         # Save the final optimized model with a special name
                         final_model_path = os.path.join(self.output_dir, "checkpoints", 
