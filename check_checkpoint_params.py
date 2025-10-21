@@ -20,8 +20,8 @@ def check_checkpoint_params(checkpoint_path):
     print(f"  num_sampling_steps: {params.num_sampling_steps}")
     print(f"  cfg: {params.cfg}")
     print(f"  temperature: {params.temperature}")
-    print(f"  window_size: {params.window_size}")
-    print(f"  lambda_local: {params.lambda_local}")
+    print(f"  window_size: {getattr(params, 'window_size', 'N/A')}")
+    print(f"  lambda_local: {getattr(params, 'lambda_local', 'N/A')}")
     
     if hasattr(params, 'ucgmts_config') and params.ucgmts_config:
         print(f"  ucgmts_config:")
