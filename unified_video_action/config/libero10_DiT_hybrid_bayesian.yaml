@@ -7,14 +7,14 @@ defaults:
 
 dataloader:
   batch_size: 32
-  num_workers: 8
+  num_workers: 0  # 设置为0避免共享内存问题
   persistent_workers: false
   pin_memory: true
   shuffle: true
 
 val_dataloader:
   batch_size: 32
-  num_workers: 8
+  num_workers: 0  # 设置为0避免共享内存问题
   persistent_workers: false
   pin_memory: true
   shuffle: false
