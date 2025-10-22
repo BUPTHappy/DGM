@@ -167,9 +167,22 @@ class BaseWorkspace:
                 print(f"Dropped {dropped_set} from ema model")
             value_new = buff
             
+            # Always drop diffactloss.net to avoid dimension mismatch
+            drop_prefixes = ("model.diffactloss.net", "model.diffactloss.ucgmts")
+            buff = {}
+            dropped_set = set()
+            for k, v in value_new.items():
+                if k.startswith(drop_prefixes):
+                    dropped_set.add(k.split(".")[2])
+                else:
+                    buff[k] = v
+            value_new = buff
+            if dropped_set:
+                print(f"Dropped {dropped_set} from ema model")
+                
+            # Additional dropping for diffhead_finetuning
             if diffhead_finetuning:
-                drop_prefixes = ("model.diffloss.net", "model.diffactloss.net", "model.diffactloss.ucgmts")
-                #drop_prefixes = ("model.diffactloss")
+                drop_prefixes = ("model.diffloss.net")
                 buff = {}
                 dropped_set = set()
                 for k, v in value_new.items():
@@ -179,20 +192,7 @@ class BaseWorkspace:
                         buff[k] = v
                 value_new = buff
                 if dropped_set:
-                    print(f"Dropped {dropped_set} from ema model")
-
-            drop_prefixes = ("model.diffactloss.ucgmts")
-            # drop_prefixes = ("model.diffactloss")
-            buff = {}
-            dropped_set = set()
-            for k, v in value_new.items():
-                if k.startswith(drop_prefixes):
-                    dropped_set.add(k.split(".")[2])
-                else:
-                    buff[k] = v
-            if dropped_set:
-                print(f"Dropped {dropped_set} from ema model")
-            value_new = buff
+                    print(f"Dropped {dropped_set} from ema model (diffhead_finetuning)")
             
             load_result = self.__dict__["model"].load_state_dict(value_new, **kwargs)
             print(f"FOR KEY {key}")
