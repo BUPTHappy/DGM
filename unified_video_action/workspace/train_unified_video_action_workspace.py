@@ -546,7 +546,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch, checkpoints_dir)
                     
                     if best_params is not None:
-                        # Apply best parameters to model
+                        # Apply best parameters to model - use the CORRECT policy model
                         policy = accelerator.unwrap_model(self.model)
                         if cfg.training.use_ema:
                             policy = self.ema_model

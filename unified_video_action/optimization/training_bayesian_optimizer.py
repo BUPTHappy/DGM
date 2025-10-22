@@ -453,7 +453,7 @@ class TrainingBayesianOptimizer:
         Apply the best parameters to the model.
         
         Args:
-            model: The model to update
+            model: The model to update (should be UnifiedVideoActionPolicy)
             params: Parameters to apply
             
         Returns:
@@ -461,13 +461,52 @@ class TrainingBayesianOptimizer:
         """
         try:
             print(f"Applying parameters to model: {params}")
+            print(f"Model type received: {type(model)}")
             
             # Print current model parameters before update
             print(f"\n{'='*50}")
             print(f"MODEL PARAMETERS BEFORE UPDATE:")
             print(f"{'='*50}")
+            
+            # Find the correct policy model (UnifiedVideoActionPolicy instance)
+            policy_model = None
+            autoregressive_params = None
+            
+            # Try to find the policy model with autoregressive_model_params
             if hasattr(model, 'autoregressive_model_params'):
+                # Direct access - model is already the policy
+                policy_model = model
                 autoregressive_params = model.autoregressive_model_params
+                print("✓ Found policy model directly")
+            elif hasattr(model, 'module') and hasattr(model.module, 'autoregressive_model_params'):
+                # Model is wrapped (e.g., DDP/DistributedDataParallel)
+                policy_model = model.module
+                autoregressive_params = model.module.autoregressive_model_params
+                print("✓ Found policy model in model.module (unwrapped from DDP)")
+            elif hasattr(model, 'model') and hasattr(model.model, 'autoregressive_model_params'):
+                # Less likely, but handle if model has model attribute
+                policy_model = model.model
+                autoregressive_params = model.model.autoregressive_model_params
+                print("✓ Found policy model in model.model")
+            else:
+                # Debug: Print all available attributes to understand the structure
+                print(f"❌ Cannot find autoregressive_model_params. Model structure:")
+                print(f"Model type: {type(model)}")
+                print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_') and not callable(getattr(model, attr))]}")
+                
+                if hasattr(model, 'model'):
+                    print(f"model.model type: {type(model.model)}")
+                    print(f"model.model attributes: {[attr for attr in dir(model.model) if not attr.startswith('_') and not callable(getattr(model.model, attr))]}")
+                
+                if hasattr(model, 'module'):
+                    print(f"model.module type: {type(model.module)}")
+                    print(f"model.module attributes: {[attr for attr in dir(model.module) if not attr.startswith('_') and not callable(getattr(model.module, attr))]}")
+                
+                print("❌ Could not locate autoregressive_model_params attribute")
+                return False
+            
+            # Print current parameters
+            if autoregressive_params:
                 print(f"Current num_sampling_steps: {getattr(autoregressive_params, 'num_sampling_steps', 'N/A')}")
                 print(f"Current cfg: {getattr(autoregressive_params, 'cfg', 'N/A')}")
                 print(f"Current temperature: {getattr(autoregressive_params, 'temperature', 'N/A')}")
@@ -486,8 +525,8 @@ class TrainingBayesianOptimizer:
                     print(f"  extrapol_ratio: {getattr(ucgmts_config, 'extrapol_ratio', 'N/A')}")
                 
                 # Also check the actual model components
-                if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
-                    diffactloss = model.model.diffactloss
+                if hasattr(policy_model, 'model') and hasattr(policy_model.model, 'diffactloss'):
+                    diffactloss = policy_model.model.diffactloss
                     print(f"Current DiffActLoss num_sampling_steps: {getattr(diffactloss, 'num_sampling_steps', 'N/A')}")
                     if hasattr(diffactloss, 'ucgmts'):
                         ucgmts = diffactloss.ucgmts
@@ -497,42 +536,13 @@ class TrainingBayesianOptimizer:
                         print(f"  rfba_gap_steps: {getattr(ucgmts, 'rfba_gap_steps', 'N/A')}")
                         print(f"  extrapol_ratio: {getattr(ucgmts, 'extrapol_ratio', 'N/A')}")
             
-            # Update model parameters
-            # Check if model has autoregressive_model_params attribute
-            autoregressive_params = None
-            
-            # Try different ways to access autoregressive_model_params
-            if hasattr(model, 'autoregressive_model_params'):
-                autoregressive_params = model.autoregressive_model_params
-                print("Found autoregressive_model_params directly on model")
-            elif hasattr(model, 'model') and hasattr(model.model, 'autoregressive_model_params'):
-                # Handle case where model is wrapped (e.g., DDP wrapper)
-                autoregressive_params = model.model.autoregressive_model_params
-                print("Found autoregressive_model_params on model.model")
-            elif hasattr(model, 'module') and hasattr(model.module, 'autoregressive_model_params'):
-                # Handle case where model is wrapped with module attribute
-                autoregressive_params = model.module.autoregressive_model_params
-                print("Found autoregressive_model_params on model.module")
-            
-            # Check if we found autoregressive_model_params
-            if autoregressive_params is None:
-                print(f"Model type: {type(model)}")
-                print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
-                
-                # Check if model has a model attribute
-                if hasattr(model, 'model'):
-                    print(f"model.model type: {type(model.model)}")
-                    print(f"model.model attributes: {[attr for attr in dir(model.model) if not attr.startswith('_')]}")
-                
-                # Check if model has a module attribute
-                if hasattr(model, 'module'):
-                    print(f"model.module type: {type(model.module)}")
-                    print(f"model.module attributes: {[attr for attr in dir(model.module) if not attr.startswith('_')]}")
-                
-                print("Model does not have autoregressive_model_params attribute")
+            # Now apply parameters
+            if not policy_model or not autoregressive_params:
+                print("❌ Failed to find policy model or autoregressive_model_params")
                 return False
             
-            # Update UCGM parameters
+            # Update UCGM parameters in the autoregressive_model_params
+            print("✓ Updating autoregressive_model_params...")
             autoregressive_params.use_ucgm = True
             autoregressive_params.num_sampling_steps = params['num_sampling_steps']
             autoregressive_params.cfg = params['cfg']
@@ -551,10 +561,12 @@ class TrainingBayesianOptimizer:
             autoregressive_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
             autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
             
-            # Also update the actual model components
-            if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
-                diffactloss = model.model.diffactloss
+            # Also update the actual model components using the policy_model we found
+            print("✓ Updating model components...")
+            if hasattr(policy_model, 'model') and hasattr(policy_model.model, 'diffactloss'):
+                diffactloss = policy_model.model.diffactloss
                 diffactloss.num_sampling_steps = params['num_sampling_steps']
+                print(f"✓ Updated DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
                 
                 if hasattr(diffactloss, 'ucgmts'):
                     ucgmts = diffactloss.ucgmts
@@ -564,66 +576,42 @@ class TrainingBayesianOptimizer:
                     ucgmts.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
                     ucgmts.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
                     ucgmts.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    print("✓ Updated UCGMTS model components")
             
-            # CRITICAL: Also update the config to ensure parameters are saved in checkpoint
-            if hasattr(model, 'cfg') and model.cfg is not None:
-                with open_dict(model.cfg.model.policy.autoregressive_model_params):
-                    if "ucgmts_config" not in model.cfg.model.policy.autoregressive_model_params:
-                        model.cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
-                    
-                    model.cfg.model.policy.autoregressive_model_params.use_ucgm = True
-                    model.cfg.model.policy.autoregressive_model_params.num_sampling_steps = params['num_sampling_steps']
-                    model.cfg.model.policy.autoregressive_model_params.cfg = params['cfg']
-                    model.cfg.model.policy.autoregressive_model_params.temperature = params['temperature']
-                    model.cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
-                    model.cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
-                    
-                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
-                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
-                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
-                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
-                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
-                    model.cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
-                    
-                    print("✓ Updated model.cfg with optimized parameters")
-                
-                # Print updated model parameters
-                print(f"\n{'='*50}")
-                print(f"MODEL PARAMETERS AFTER UPDATE:")
-                print(f"{'='*50}")
-                print(f"Updated num_sampling_steps: {autoregressive_params.num_sampling_steps}")
-                print(f"Updated cfg: {autoregressive_params.cfg}")
-                print(f"Updated temperature: {autoregressive_params.temperature}")
-                print(f"Updated window_size: {autoregressive_params.window_size}")
-                print(f"Updated lambda_local: {autoregressive_params.lambda_local}")
-                print(f"Updated use_ucgm: {autoregressive_params.use_ucgm}")
-                
-                print(f"Updated ucgmts_config:")
-                print(f"  transport_type: {autoregressive_params.ucgmts_config.transport_type}")
-                print(f"  consistc_ratio: {autoregressive_params.ucgmts_config.consistc_ratio}")
-                print(f"  scaled_cbl_eps: {autoregressive_params.ucgmts_config.scaled_cbl_eps}")
-                print(f"  ema_decay_rate: {autoregressive_params.ucgmts_config.ema_decay_rate}")
-                print(f"  rfba_gap_steps: {autoregressive_params.ucgmts_config.rfba_gap_steps}")
-                print(f"  extrapol_ratio: {autoregressive_params.ucgmts_config.extrapol_ratio}")
-                
-                # Also print the actual model components
-                if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
-                    diffactloss = model.model.diffactloss
-                    print(f"Updated DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
-                    if hasattr(diffactloss, 'ucgmts'):
-                        ucgmts = diffactloss.ucgmts
-                        print(f"Updated UCGMTS parameters:")
-                        print(f"  transport_type: {ucgmts.transport_type}")
-                        print(f"  consistc_ratio: {ucgmts.consistc_ratio}")
-                        print(f"  rfba_gap_steps: {ucgmts.rfba_gap_steps}")
-                        print(f"  extrapol_ratio: {ucgmts.extrapol_ratio}")
-                print(f"{'='*50}")
-                
-                print("Parameters successfully applied to model")
-                return True
-            else:
-                print("Model does not have autoregressive_model_params attribute")
-                return False
+            # Print updated model parameters for verification
+            print(f"\n{'='*50}")
+            print(f"MODEL PARAMETERS AFTER UPDATE:")
+            print(f"{'='*50}")
+            print(f"Updated num_sampling_steps: {autoregressive_params.num_sampling_steps}")
+            print(f"Updated cfg: {autoregressive_params.cfg}")
+            print(f"Updated temperature: {autoregressive_params.temperature}")
+            print(f"Updated window_size: {autoregressive_params.window_size}")
+            print(f"Updated lambda_local: {autoregressive_params.lambda_local}")
+            print(f"Updated use_ucgm: {autoregressive_params.use_ucgm}")
+            
+            print(f"Updated ucgmts_config:")
+            print(f"  transport_type: {autoregressive_params.ucgmts_config.transport_type}")
+            print(f"  consistc_ratio: {autoregressive_params.ucgmts_config.consistc_ratio}")
+            print(f"  scaled_cbl_eps: {autoregressive_params.ucgmts_config.scaled_cbl_eps}")
+            print(f"  ema_decay_rate: {autoregressive_params.ucgmts_config.ema_decay_rate}")
+            print(f"  rfba_gap_steps: {autoregressive_params.ucgmts_config.rfba_gap_steps}")
+            print(f"  extrapol_ratio: {autoregressive_params.ucgmts_config.extrapol_ratio}")
+            
+            # Verify the actual model components were updated
+            if hasattr(policy_model, 'model') and hasattr(policy_model.model, 'diffactloss'):
+                diffactloss = policy_model.model.diffactloss
+                print(f"Verified DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
+                if hasattr(diffactloss, 'ucgmts'):
+                    ucgmts = diffactloss.ucgmts
+                    print(f"Verified UCGMTS parameters:")
+                    print(f"  transport_type: {ucgmts.transport_type}")
+                    print(f"  consistc_ratio: {ucgmts.consistc_ratio}")
+                    print(f"  rfba_gap_steps: {ucgmts.rfba_gap_steps}")
+                    print(f"  extrapol_ratio: {ucgmts.extrapol_ratio}")
+            print(f"{'='*50}")
+            
+            print("✅ Parameters successfully applied to model!")
+            return True
                 
         except Exception as e:
             print(f"Error applying parameters to model: {e}")
