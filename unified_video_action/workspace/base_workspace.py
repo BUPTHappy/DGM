@@ -167,18 +167,32 @@ class BaseWorkspace:
                 print(f"Dropped {dropped_set} from ema model")
             value_new = buff
             
-            # Also drop final layer parameters if there's a dimension mismatch
-            final_layer_prefixes = ("model.diffactloss.net.final_layer")
+            if diffhead_finetuning:
+                drop_prefixes = ("model.diffloss.net", "model.diffactloss.net", "model.diffactloss.ucgmts")
+                #drop_prefixes = ("model.diffactloss")
+                buff = {}
+                dropped_set = set()
+                for k, v in value_new.items():
+                    if k.startswith(drop_prefixes):
+                        dropped_set.add(k.split(".")[2])
+                    else:
+                        buff[k] = v
+                value_new = buff
+                if dropped_set:
+                    print(f"Dropped {dropped_set} from ema model")
+
+            drop_prefixes = ("model.diffactloss.ucgmts")
+            # drop_prefixes = ("model.diffactloss")
             buff = {}
-            final_layer_dropped = set()
+            dropped_set = set()
             for k, v in value_new.items():
-                if k.startswith(final_layer_prefixes):
-                    final_layer_dropped.add(k)
+                if k.startswith(drop_prefixes):
+                    dropped_set.add(k.split(".")[2])
                 else:
                     buff[k] = v
+            if dropped_set:
+                print(f"Dropped {dropped_set} from ema model")
             value_new = buff
-            if final_layer_dropped:
-                print(f"Dropped final layer parameters due to dimension mismatch: {final_layer_dropped}")
             
             load_result = self.__dict__["model"].load_state_dict(value_new, **kwargs)
             print(f"FOR KEY {key}")
