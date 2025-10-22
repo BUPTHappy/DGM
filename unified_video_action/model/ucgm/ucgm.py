@@ -179,14 +179,15 @@ class UCGMTS(torch.nn.Module):
         self.alpha_in, self.gamma_in = transport.alpha_in, transport.gamma_in
         self.alpha_to, self.gamma_to = transport.alpha_to, transport.gamma_to
 
-        if self.gamma_in(torch.tensor(0)).abs().item() < 0.005:
+        gamma_at_zero = self.gamma_in(torch.tensor(0)).abs().item()
+        alpha_at_zero = self.alpha_in(torch.tensor(0)).abs().item()
+        
+        if gamma_at_zero < alpha_at_zero:
             self.integ_st = 0  # Start point if integral from 0 to 1
             self.alpha_in, self.gamma_in = self.gamma_in, self.alpha_in
             self.alpha_to, self.gamma_to = self.gamma_to, self.alpha_to
-        elif self.alpha_in(torch.tensor(0)).abs().item() < 0.005:
-            self.integ_st = 1  # Start point if integral from 1 to 0
         else:
-            raise ValueError("Invalid Alpha and Gamma functions")
+            self.integ_st = 1  # Start point if integral from 1 to 0
 
     def sample_beta(self, alpha, beta, size):
         beta_dist = torch.distributions.Beta(alpha, beta)

@@ -48,9 +48,9 @@ class AdaptiveUCGMBayesianOptimizer:
         num_sampling_steps = trial.suggest_categorical('num_sampling_steps', [1, 2])
         
         # 使用固定的categorical choices避免Optuna错误
-        transport_type = trial.suggest_categorical('transport_type', ['Linear', 'TrigFlow', 'Cosine', 'DDPM'])
-        wt_cosine_loss = trial.suggest_categorical('wt_cosine_loss', [True, False])
-        weight_function = trial.suggest_categorical('weight_function', [None, 'Cosine'])
+        transport_type = 'Linear'  # 固定使用Linear transport
+        wt_cosine_loss = False  # 固定不使用cosine loss
+        weight_function = None  # 固定不使用weight function
         
         # 统一的参数范围，不根据步数强制划分
         # 让优化器自由探索，只在步数上做限制
@@ -104,9 +104,9 @@ class AdaptiveUCGMBayesianOptimizer:
         num_sampling_steps = trial.suggest_categorical('num_sampling_steps', [2, 3, 4, 5, 6, 7, 8, 9, 10])
         
         # 使用固定的categorical choices避免Optuna错误
-        transport_type = trial.suggest_categorical('transport_type', ['Linear', 'TrigFlow', 'Cosine', 'DDPM'])
-        wt_cosine_loss = trial.suggest_categorical('wt_cosine_loss', [True, False])
-        weight_function = trial.suggest_categorical('weight_function', [None, 'Cosine'])
+        transport_type = 'Linear'  # 固定使用Linear transport
+        wt_cosine_loss = False  # 固定不使用cosine loss
+        weight_function = None  # 固定不使用weight function
         
         # 根据步数调整参数
         # 使用更灵活的参数范围，避免武断的步数划分
@@ -162,9 +162,9 @@ class AdaptiveUCGMBayesianOptimizer:
         num_sampling_steps = trial.suggest_categorical('num_sampling_steps', [1, 2, 3])
         
         # 使用固定的categorical choices避免Optuna错误
-        transport_type = trial.suggest_categorical('transport_type', ['Linear', 'TrigFlow', 'Cosine', 'DDPM'])
-        wt_cosine_loss = trial.suggest_categorical('wt_cosine_loss', [True, False])
-        weight_function = trial.suggest_categorical('weight_function', [None, 'Cosine'])
+        transport_type = 'Linear'  # 固定使用Linear transport
+        wt_cosine_loss = False  # 固定不使用cosine loss
+        weight_function = None  # 固定不使用weight function
         
         # 统一的参数范围，不根据步数强制划分
         # 让优化器自由探索，只在步数上做限制
