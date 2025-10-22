@@ -115,7 +115,7 @@ class BaseWorkspace:
                         value_new = buff
 
                     
-                    drop_prefixes = ("model.diffactloss.ucgmts")
+                    drop_prefixes = ("model.diffactloss.ucgmts", "model.diffactloss.net.final_layer")
                     # drop_prefixes = ("model.diffactloss")
                     buff = {}
                     for k, v in value_new.items():
