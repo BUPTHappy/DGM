@@ -146,6 +146,57 @@ class TrainingBayesianOptimizer:
             
         return best_checkpoint
     
+    def _create_temp_config(self, cfg, params, config_path):
+        """Create a temporary config file with all optimization parameters."""
+        import yaml
+        
+        # Create a copy of the config
+        temp_cfg = OmegaConf.create(cfg)
+        
+        # Update autoregressive_model_params with all optimization parameters
+        with open_dict(temp_cfg.model.policy.autoregressive_model_params):
+            if "ucgmts_config" not in temp_cfg.model.policy.autoregressive_model_params:
+                temp_cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
+            
+            # Update all 16 parameters
+            temp_cfg.model.policy.autoregressive_model_params.use_ucgm = True
+            temp_cfg.model.policy.autoregressive_model_params.num_sampling_steps = params['num_sampling_steps']
+            temp_cfg.model.policy.autoregressive_model_params.cfg = params['cfg']
+            temp_cfg.model.policy.autoregressive_model_params.temperature = params['temperature']
+            temp_cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
+            temp_cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
+            
+            # Update UCGMTS config with all parameters
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.lab_drop_ratio = params['ucgmts_config']['lab_drop_ratio']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.enhanced_ratio = params['ucgmts_config']['enhanced_ratio']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.wt_cosine_loss = params['ucgmts_config']['wt_cosine_loss']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.weight_function = params['ucgmts_config']['weight_function']
+            temp_cfg.model.policy.autoregressive_model_params.ucgmts_config.time_dist_ctrl = params['ucgmts_config']['time_dist_ctrl']
+        
+        # Save the config to file
+        with open(config_path, 'w') as f:
+            OmegaConf.save(temp_cfg, f)
+        
+        print(f"Created temporary config file: {config_path}")
+        
+        # Debug: Print the parameters being passed
+        print(f"DEBUG: Parameters being passed to evaluation:")
+        print(f"  num_sampling_steps: {params['num_sampling_steps']}")
+        print(f"  transport_type: {params['ucgmts_config']['transport_type']}")
+        print(f"  cfg: {params['cfg']}")
+        print(f"  temperature: {params['temperature']}")
+        print(f"  window_size: {params['window_size']}")
+        print(f"  lambda_local: {params['lambda_local']}")
+        print(f"  consistc_ratio: {params['ucgmts_config']['consistc_ratio']}")
+        print(f"  scaled_cbl_eps: {params['ucgmts_config']['scaled_cbl_eps']}")
+        print(f"  ema_decay_rate: {params['ucgmts_config']['ema_decay_rate']}")
+    
     def evaluate_model_with_params(self, 
                                  params: Dict[str, Any], 
                                  checkpoint_path: str) -> float:
@@ -217,6 +268,12 @@ class TrainingBayesianOptimizer:
             # Create temp output directory
             temp_output_dir = tempfile.mkdtemp(prefix="bayesian_eval_")
             
+            # Create temporary config file with all parameters if params is not empty
+            temp_config_path = None
+            if params:  # Only create config file for optimization trials
+                temp_config_path = os.path.join(temp_output_dir, "temp_config.yaml")
+                self._create_temp_config(cfg, params, temp_config_path)
+            
             # Run evaluation
             cmd = [
                 "python", "eval_sim.py",
@@ -226,7 +283,11 @@ class TrainingBayesianOptimizer:
                 "--use_ucgm"
             ]
             
-            # Only add parameter arguments if params is not empty (for optimization trials)
+            # Add config file if we have parameters
+            if temp_config_path:
+                cmd.extend(["--config_file", temp_config_path])
+            
+            # Add basic parameter arguments (for backward compatibility)
             if params:  # Only add parameter arguments if params is not empty
                 cmd.extend([
                     "--num_sampling_steps", str(params['num_sampling_steps']),

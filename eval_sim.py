@@ -55,35 +55,58 @@ from types import SimpleNamespace
     show_default=True,
     help="Lambda parameter for local feature fusion."
 )
-def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
+@click.option(
+    "--config_file",
+    type=str,
+    default=None,
+    show_default=True,
+    help="Path to temporary config file with all UCGM parameters."
+)
+def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local, config_file):
 
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # load checkpoint
-
     payload = torch.load(open(checkpoint, "rb"), pickle_module=dill, weights_only=False)
     cfg = payload["cfg"]
     
+    # Load config file if provided (for Bayesian optimization)
+    if config_file and os.path.exists(config_file):
+        print(f"Loading optimization parameters from config file: {config_file}")
+        temp_cfg = OmegaConf.load(config_file)
+        # Merge the temp config with the checkpoint config
+        cfg.model.policy.autoregressive_model_params = temp_cfg.model.policy.autoregressive_model_params
+        print("Applied all optimization parameters from config file")
+        
+        # Debug: Print applied parameters
+        print(f"DEBUG: Applied parameters in eval_sim.py:")
+        print(f"  num_sampling_steps: {cfg.model.policy.autoregressive_model_params.num_sampling_steps}")
+        print(f"  transport_type: {cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type}")
+        print(f"  cfg: {cfg.model.policy.autoregressive_model_params.cfg}")
+        print(f"  temperature: {cfg.model.policy.autoregressive_model_params.temperature}")
+        print(f"  window_size: {cfg.model.policy.autoregressive_model_params.window_size}")
+        print(f"  lambda_local: {cfg.model.policy.autoregressive_model_params.lambda_local}")
+        print(f"  consistc_ratio: {cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio}")
+        print(f"  scaled_cbl_eps: {cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps}")
+        print(f"  ema_decay_rate: {cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate}")
+    else:
+        # Apply individual parameters (backward compatibility)
+        with open_dict(cfg.model.policy.autoregressive_model_params):
+            if "ucgmts_config" not in cfg.model.policy.autoregressive_model_params:
+                # create as a DictConfig; empty dict is fine
+                cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = "Linear"
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbs_eps = 0.0
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = 0.0
 
-    #cfg.model.policy.autoregressive_model_params.num_sampling_steps = str(num_sampling_steps)
-    #cfg.model.policy.autoregressive_model_params.act_diff_testing_steps = str(num_sampling_steps)
-
-    with open_dict(cfg.model.policy.autoregressive_model_params):
-        if "ucgmts_config" not in cfg.model.policy.autoregressive_model_params:
-            # create as a DictConfig; empty dict is fine
-            cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
-            cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = "Linear"
-            cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbs_eps = 0.0
-            cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = 0.0
-
-        if stochasticity_rate is not None:
-            cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = stochasticity_rate
-        if num_sampling_steps:
-            cfg.model.policy.autoregressive_model_params.num_sampling_steps = num_sampling_steps
-            if num_sampling_steps <= 2:
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5] 
-            else:
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
+            if stochasticity_rate is not None:
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = stochasticity_rate
+            if num_sampling_steps:
+                cfg.model.policy.autoregressive_model_params.num_sampling_steps = num_sampling_steps
+                if num_sampling_steps <= 2:
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5] 
+                else:
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
         
         # 处理local attention参数
         if window_size is not None:
