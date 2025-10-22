@@ -115,8 +115,8 @@ class BaseWorkspace:
                         value_new = buff
 
                     
-                    drop_prefixes = ("model.diffactloss.ucgmts", "model.diffactloss.net.final_layer")
-                    # drop_prefixes = ("model.diffactloss")
+                    # 只跳过UCGM相关参数，保留diffactloss.net（现在维度匹配了）
+                    drop_prefixes = ("model.diffactloss.ucgmts")
                     buff = {}
                     for k, v in value_new.items():
                         if k.startswith(drop_prefixes):

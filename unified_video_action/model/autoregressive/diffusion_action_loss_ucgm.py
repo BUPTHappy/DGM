@@ -93,7 +93,7 @@ class DiffActLossUCGM(nn.Module):
         self.net = SimpleMLPAdaLN(
             in_channels=target_channels,
             model_channels=width,
-            out_channels=target_channels,  # 直接输出2维，像DiT一样
+            out_channels=target_channels * 2,  # 4D输出，与原始MLP版本一致
             z_channels=z_channels,
             num_res_blocks=depth,
             grad_checkpointing=grad_checkpointing,
@@ -231,5 +231,6 @@ class DiffActLossUCGM(nn.Module):
         sampled_token = rearrange(
             sampled_token, "(b t) c -> b t c", b=bsz
         )
-        return sampled_token
+        # 取前2维作为最终动作输出，与原始MLP版本一致
+        return sampled_token[:, :, :2]
 
