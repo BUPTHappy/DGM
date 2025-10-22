@@ -352,6 +352,11 @@ class TrainingBayesianOptimizer:
             return self.evaluate_model_with_params(params, checkpoint_path)
         
         try:
+            # First, evaluate current model performance as baseline
+            print("Evaluating current model performance as baseline...")
+            current_score = self.evaluate_model_with_params({}, checkpoint_path)  # Empty params = use current config
+            print(f"Current model score: {current_score:.4f}")
+            
             # Run optimization with temporary optimizer
             result = temp_optimizer.optimize(objective_function)
             
@@ -369,38 +374,70 @@ class TrainingBayesianOptimizer:
             
             if best_params is not None and best_score > -1000.0:
                 print(f"Optimization completed!")
-                print(f"Best score: {best_score:.4f}")
+                print(f"Current model score: {current_score:.4f}")
+                print(f"Best optimization score: {best_score:.4f}")
                 print(f"Best params: {best_params}")
                 
-                # Update best parameters if this is the best so far
-                if best_score > self.best_score:
-                    self.best_score = best_score
-                    self.best_params = best_params
-                    print(f"New best parameters found! Score: {best_score:.4f}")
-                
-                # Save optimization results
-                import time
-                optimization_result = {
-                    'epoch': current_epoch,
-                    'best_params': best_params,
-                    'best_score': best_score,
-                    'checkpoint_path': checkpoint_path,
-                    'timestamp': time.time()
-                }
-                
-                self.optimization_history.append(optimization_result)
-                
-                # Save to file
-                results_file = os.path.join(self.output_dir, f"optimization_epoch_{current_epoch}.json")
-                with open(results_file, 'w') as f:
-                    json.dump(optimization_result, f, indent=2)
-                
-                # Save complete history
-                history_file = os.path.join(self.output_dir, "optimization_history.json")
-                with open(history_file, 'w') as f:
-                    json.dump(self.optimization_history, f, indent=2)
-                
-                return best_params
+                # Only apply parameters if optimization result is better than current model
+                if best_score > current_score:
+                    print(f"✅ Optimization improved performance! ({current_score:.4f} → {best_score:.4f})")
+                    
+                    # Update best parameters if this is the best so far
+                    if best_score > self.best_score:
+                        self.best_score = best_score
+                        self.best_params = best_params
+                        print(f"New best parameters found! Score: {best_score:.4f}")
+                    
+                    # Save optimization results
+                    import time
+                    optimization_result = {
+                        'epoch': current_epoch,
+                        'current_score': current_score,
+                        'best_params': best_params,
+                        'best_score': best_score,
+                        'improvement': best_score - current_score,
+                        'checkpoint_path': checkpoint_path,
+                        'timestamp': time.time()
+                    }
+                    
+                    self.optimization_history.append(optimization_result)
+                    
+                    # Save to file
+                    results_file = os.path.join(self.output_dir, f"optimization_epoch_{current_epoch}.json")
+                    with open(results_file, 'w') as f:
+                        json.dump(optimization_result, f, indent=2)
+                    
+                    # Save complete history
+                    history_file = os.path.join(self.output_dir, "optimization_history.json")
+                    with open(history_file, 'w') as f:
+                        json.dump(self.optimization_history, f, indent=2)
+                    
+                    return best_params
+                else:
+                    print(f"❌ Optimization did not improve performance ({current_score:.4f} ≥ {best_score:.4f})")
+                    print("Keeping current model parameters")
+                    
+                    # Still save the optimization results for analysis
+                    import time
+                    optimization_result = {
+                        'epoch': current_epoch,
+                        'current_score': current_score,
+                        'best_params': best_params,
+                        'best_score': best_score,
+                        'improvement': best_score - current_score,
+                        'checkpoint_path': checkpoint_path,
+                        'timestamp': time.time(),
+                        'applied': False
+                    }
+                    
+                    self.optimization_history.append(optimization_result)
+                    
+                    # Save to file
+                    results_file = os.path.join(self.output_dir, f"optimization_epoch_{current_epoch}.json")
+                    with open(results_file, 'w') as f:
+                        json.dump(optimization_result, f, indent=2)
+                    
+                    return None  # Don't apply parameters
             else:
                 print("Optimization failed or no valid parameters found")
                 return None
@@ -476,7 +513,9 @@ class TrainingBayesianOptimizer:
                 # Handle case where model is wrapped with module attribute
                 autoregressive_params = model.module.autoregressive_model_params
                 print("Found autoregressive_model_params on model.module")
-            else:
+            
+            # Check if we found autoregressive_model_params
+            if autoregressive_params is None:
                 print(f"Model type: {type(model)}")
                 print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
                 
