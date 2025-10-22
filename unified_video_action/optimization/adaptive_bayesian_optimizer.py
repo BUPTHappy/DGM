@@ -237,14 +237,22 @@ class AdaptiveUCGMBayesianOptimizer:
             return score
         
         self.study.optimize(objective, n_trials=self.max_trials)
-        self.best_params = self.study.best_params
+        
+        # Process the best parameters to include ucgmts_config structure
+        raw_best_params = self.study.best_params
+        self.best_params = self._build_ucgmts_config(raw_best_params.copy())
         best_score = self.study.best_value
         
         print(f"\n🎉 Optimization completed!")
         print(f"📊 Best score: {best_score:.4f}")
         print(f"⚙️ Best parameters:")
         for key, value in self.best_params.items():
-            print(f"   {key}: {value}")
+            if key == 'ucgmts_config':
+                print(f"   {key}:")
+                for sub_key, sub_value in value.items():
+                    print(f"     {sub_key}: {sub_value}")
+            else:
+                print(f"   {key}: {value}")
         
         return self.best_params, best_score
 
