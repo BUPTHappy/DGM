@@ -147,13 +147,16 @@ class TrainingBayesianOptimizer:
         """
         try:
             print(f"Evaluating params: {params}")
+            print(f"Using checkpoint: {checkpoint_path}")
+            print(f"Using device: {self.device}")
             
             # Clear CUDA cache before evaluation
             torch.cuda.empty_cache()
+            torch.cuda.synchronize()
             
             # Wait a bit to ensure checkpoint is fully written
             import time
-            time.sleep(2)
+            time.sleep(5)  # Increased wait time
             
             # Check if checkpoint file is valid before loading
             if not self._is_checkpoint_valid(checkpoint_path):
@@ -191,11 +194,11 @@ class TrainingBayesianOptimizer:
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.weight_function = params['ucgmts_config']['weight_function']
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.time_dist_ctrl = params['ucgmts_config']['time_dist_ctrl']
             
-            # Set test count
+            # Set test count - reduce for training integration to avoid timeouts
             if "libero" in cfg.task.name:
-                cfg.task.env_runner.n_test = self.n_test
+                cfg.task.env_runner.n_test = min(self.n_test, 3)  # Cap at 3 for libero
             else:
-                cfg.task.env_runner.n_test = min(self.n_test * 5, 50)
+                cfg.task.env_runner.n_test = min(self.n_test, 5)  # Cap at 5 for pusht
             
             # Create temp output directory
             temp_output_dir = tempfile.mkdtemp(prefix="bayesian_eval_")
@@ -221,11 +224,14 @@ class TrainingBayesianOptimizer:
                 capture_output=True,
                 text=True,
                 env=env,
-                timeout=180  # Reduced timeout for training integration
+                timeout=600  # Increased timeout to 10 minutes for evaluation
             )
             
             if result.returncode != 0:
-                print(f"Evaluation failed: {result.stderr}")
+                print(f"Evaluation failed with return code {result.returncode}")
+                print(f"STDOUT: {result.stdout}")
+                print(f"STDERR: {result.stderr}")
+                print(f"Command: {' '.join(cmd)}")
                 return -1000.0
             
             # Parse results
@@ -261,8 +267,10 @@ class TrainingBayesianOptimizer:
             return float(score)
             
         except subprocess.TimeoutExpired:
-            print("Evaluation timeout")
+            print("Evaluation timeout - this might indicate the evaluation is taking too long")
+            print("Consider reducing n_test or increasing timeout")
             torch.cuda.empty_cache()
+            torch.cuda.synchronize()
             return -1000.0
         except RuntimeError as e:
             if "CUDA" in str(e) or "cuda" in str(e).lower():
@@ -276,7 +284,11 @@ class TrainingBayesianOptimizer:
                 return -1000.0
         except Exception as e:
             print(f"Evaluation error: {e}")
+            print(f"Error type: {type(e).__name__}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
             torch.cuda.empty_cache()
+            torch.cuda.synchronize()
             return -1000.0
     
     def run_optimization(self, 
