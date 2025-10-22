@@ -166,6 +166,20 @@ class BaseWorkspace:
             if dropped_set:
                 print(f"Dropped {dropped_set} from ema model")
             value_new = buff
+            
+            # Also drop final layer parameters if there's a dimension mismatch
+            final_layer_prefixes = ("model.diffactloss.net.final_layer")
+            buff = {}
+            final_layer_dropped = set()
+            for k, v in value_new.items():
+                if k.startswith(final_layer_prefixes):
+                    final_layer_dropped.add(k)
+                else:
+                    buff[k] = v
+            value_new = buff
+            if final_layer_dropped:
+                print(f"Dropped final layer parameters due to dimension mismatch: {final_layer_dropped}")
+            
             load_result = self.__dict__["model"].load_state_dict(value_new, **kwargs)
             print(f"FOR KEY {key}")
             missing_keys = set([
