@@ -115,7 +115,7 @@ class BaseWorkspace:
                         value_new = buff
 
                     
-                    # 只跳过UCGM相关参数，保留diffactloss.net（现在维度匹配了）
+                    # Skip UCGM params, keep diffactloss.net (dimensions match now)
                     drop_prefixes = ("model.diffactloss.ucgmts")
                     buff = {}
                     for k, v in value_new.items():
@@ -131,7 +131,7 @@ class BaseWorkspace:
                     raise e
 
         if "model" not in payload["state_dicts"]:
-            print("loading checkpoint, use ema model for model")
+            print("Loading checkpoint, using EMA model")
             value = payload["state_dicts"]["ema_model"]
             value_new = {}
             for k, v in value.items():
@@ -152,7 +152,7 @@ class BaseWorkspace:
                         buff[k] = v
                 value_new = buff
                 if dropped_set:
-                    print(f"Dropped {dropped_set} from ema model")
+                    print(f"Dropped {dropped_set} from EMA model")
 
             drop_prefixes = ("model.diffactloss.ucgmts")
             # drop_prefixes = ("model.diffactloss")
@@ -164,7 +164,7 @@ class BaseWorkspace:
                 else:
                     buff[k] = v
             if dropped_set:
-                print(f"Dropped {dropped_set} from ema model")
+                print(f"Dropped {dropped_set} from EMA model")
             value_new = buff
             
             # Always drop diffactloss.net to avoid dimension mismatch
@@ -178,7 +178,7 @@ class BaseWorkspace:
                     buff[k] = v
             value_new = buff
             if dropped_set:
-                print(f"Dropped {dropped_set} from ema model")
+                print(f"Dropped {dropped_set} from EMA model")
                 
             # Additional dropping for diffhead_finetuning
             if diffhead_finetuning:
@@ -192,10 +192,10 @@ class BaseWorkspace:
                         buff[k] = v
                 value_new = buff
                 if dropped_set:
-                    print(f"Dropped {dropped_set} from ema model (diffhead_finetuning)")
+                    print(f"Dropped {dropped_set} from EMA model (diffhead_finetuning)")
             
             load_result = self.__dict__["model"].load_state_dict(value_new, **kwargs)
-            print(f"FOR KEY {key}")
+            print(f"Loading key: {key}")
             missing_keys = set([
                 ".".join(k.split(".")[:3]) for k in load_result.missing_keys
             ])
@@ -204,8 +204,8 @@ class BaseWorkspace:
                 ".".join(k.split(".")[:3]) for k in load_result.unexpected_keys
             ])
 
-            print("Missing keys:", missing_keys)
-            print("Unexpected keys:", unexpected_keys)
+            print(f"Missing keys: {missing_keys}")
+            print(f"Unexpected keys: {unexpected_keys}")
 
         for key in include_keys:
             if key in payload["pickles"]:
@@ -238,11 +238,11 @@ class BaseWorkspace:
                     self.__dict__[key].load_state_dict(value_new, **kwargs)
                 except Exception as e:
                     #print(f"{key=}, {value_new.keys()=}, {value_new=}, {kwargs=}")
-                    print(f"Error loading {key} with keys {value_new.keys()}")
+                    print(f"Error loading {key} with keys: {list(value_new.keys())}")
                     raise e
 
         if "model" not in payload["state_dicts"]:
-            print("loading checkpoint, use ema model for model")
+            print("Loading checkpoint, using EMA model")
             value = payload["state_dicts"]["ema_model"]
             value_new = {}
             for k, v in value.items():
@@ -284,7 +284,7 @@ class BaseWorkspace:
 
     def save_snapshot(self, tag="latest"):
         """
-        Quick loading and saving for reserach, saves full state of the workspace.
+        Quick loading and saving for research, saves full state of the workspace.
 
         However, loading a snapshot assumes the code stays exactly the same.
         Use save_checkpoint for long-term storage.

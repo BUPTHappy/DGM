@@ -33,7 +33,8 @@ class TrainingBayesianOptimizer:
                  device: str = "cuda:0",
                  output_dir: str = "./bayesian_optimization_logs",
                  use_best_checkpoint_for_final: bool = True,
-                 optimization_mode: str = "balanced"):
+                 optimization_mode: str = "balanced",
+                 workspace=None):
         """
         Initialize the training-integrated Bayesian optimizer.
         
@@ -49,6 +50,7 @@ class TrainingBayesianOptimizer:
             output_dir: Output directory for optimization logs
             use_best_checkpoint_for_final: Whether to use best checkpoint for final optimization
             optimization_mode: Optimization mode ("performance", "speed", "balanced")
+            workspace: Reference to the training workspace for parameter persistence
         """
         self.config = config
         self.start_epoch = start_epoch
@@ -61,6 +63,7 @@ class TrainingBayesianOptimizer:
         self.output_dir = output_dir
         self.use_best_checkpoint_for_final = use_best_checkpoint_for_final
         self.optimization_mode = optimization_mode
+        self.workspace = workspace
         
         # Create output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -87,6 +90,11 @@ class TrainingBayesianOptimizer:
         print(f"  Optimization mode: {optimization_mode}")
         print(f"  Use best checkpoint for final: {use_best_checkpoint_for_final}")
         print(f"  Output dir: {output_dir}")
+    
+    def set_workspace(self, workspace):
+        """Set the workspace reference for parameter persistence."""
+        self.workspace = workspace
+        print("Workspace reference set for parameter persistence")
     
     def should_optimize(self, current_epoch: int) -> bool:
         """Check if optimization should be performed at current epoch."""
@@ -167,32 +175,38 @@ class TrainingBayesianOptimizer:
             payload = torch.load(open(checkpoint_path, "rb"), pickle_module=dill, weights_only=False)
             cfg = payload["cfg"]
             
-            # Update config parameters
-            with open_dict(cfg.model.policy.autoregressive_model_params):
-                if "ucgmts_config" not in cfg.model.policy.autoregressive_model_params:
-                    cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
-                
-                cfg.model.policy.autoregressive_model_params.use_ucgm = True
-                cfg.model.policy.autoregressive_model_params.num_sampling_steps = params['num_sampling_steps']
-                cfg.model.policy.autoregressive_model_params.cfg = params['cfg']
-                cfg.model.policy.autoregressive_model_params.temperature = params['temperature']
-                
-                # Local attention parameters
-                cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
-                cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
-                
-                # UCGM Training parameters
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.lab_drop_ratio = params['ucgmts_config']['lab_drop_ratio']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.enhanced_ratio = params['ucgmts_config']['enhanced_ratio']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.wt_cosine_loss = params['ucgmts_config']['wt_cosine_loss']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.weight_function = params['ucgmts_config']['weight_function']
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.time_dist_ctrl = params['ucgmts_config']['time_dist_ctrl']
+            # Update config parameters only if params is not empty (for optimization trials)
+            # If params is empty, we use the current config as-is (for baseline evaluation)
+            if params:  # Only update if params is not empty
+                with open_dict(cfg.model.policy.autoregressive_model_params):
+                    if "ucgmts_config" not in cfg.model.policy.autoregressive_model_params:
+                        cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
+                    
+                    cfg.model.policy.autoregressive_model_params.use_ucgm = True
+                    cfg.model.policy.autoregressive_model_params.num_sampling_steps = params['num_sampling_steps']
+                    cfg.model.policy.autoregressive_model_params.cfg = params['cfg']
+                    cfg.model.policy.autoregressive_model_params.temperature = params['temperature']
+                    
+                    # Local attention parameters
+                    cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
+                    cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
+                    
+                    # UCGM Training parameters
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.lab_drop_ratio = params['ucgmts_config']['lab_drop_ratio']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.enhanced_ratio = params['ucgmts_config']['enhanced_ratio']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.wt_cosine_loss = params['ucgmts_config']['wt_cosine_loss']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.weight_function = params['ucgmts_config']['weight_function']
+                    cfg.model.policy.autoregressive_model_params.ucgmts_config.time_dist_ctrl = params['ucgmts_config']['time_dist_ctrl']
+                    
+                    print("Updated config with optimization parameters")
+            else:
+                print("Using current config as-is for baseline evaluation")
             
             # Set test count - reduce for training integration to avoid timeouts
             if "libero" in cfg.task.name:
@@ -209,12 +223,17 @@ class TrainingBayesianOptimizer:
                 "--checkpoint", checkpoint_path,
                 "--output_dir", temp_output_dir,
                 "--device", self.device,
-                "--use_ucgm",
-                "--num_sampling_steps", str(params['num_sampling_steps']),
-                "--stochasticity_rate", str(params['consistc_ratio']),
-                "--window_size", str(params['window_size']),
-                "--lambda_local", str(params['lambda_local'])
+                "--use_ucgm"
             ]
+            
+            # Only add parameter arguments if params is not empty (for optimization trials)
+            if params:  # Only add parameter arguments if params is not empty
+                cmd.extend([
+                    "--num_sampling_steps", str(params['num_sampling_steps']),
+                    "--stochasticity_rate", str(params['consistc_ratio']),
+                    "--window_size", str(params['window_size']),
+                    "--lambda_local", str(params['lambda_local'])
+                ])
             
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = self.device.split(":")[-1] if ":" in self.device else "0"
@@ -380,7 +399,7 @@ class TrainingBayesianOptimizer:
                 
                 # Only apply parameters if optimization result is better than current model
                 if best_score > current_score:
-                    print(f"✅ Optimization improved performance! ({current_score:.4f} → {best_score:.4f})")
+                    print(f"Optimization improved performance: {current_score:.4f} -> {best_score:.4f}")
                     
                     # Update best parameters if this is the best so far
                     if best_score > self.best_score:
@@ -414,7 +433,7 @@ class TrainingBayesianOptimizer:
                     
                     return best_params
                 else:
-                    print(f"❌ Optimization did not improve performance ({current_score:.4f} ≥ {best_score:.4f})")
+                    print(f"Optimization did not improve performance: {current_score:.4f} >= {best_score:.4f}")
                     print("Keeping current model parameters")
                     
                     # Still save the optimization results for analysis
@@ -477,20 +496,20 @@ class TrainingBayesianOptimizer:
                 # Direct access - model is already the policy
                 policy_model = model
                 autoregressive_params = model.autoregressive_model_params
-                print("✓ Found policy model directly")
+                print("Found policy model directly")
             elif hasattr(model, 'module') and hasattr(model.module, 'autoregressive_model_params'):
                 # Model is wrapped (e.g., DDP/DistributedDataParallel)
                 policy_model = model.module
                 autoregressive_params = model.module.autoregressive_model_params
-                print("✓ Found policy model in model.module (unwrapped from DDP)")
+                print("Found policy model in model.module (unwrapped from DDP)")
             elif hasattr(model, 'model') and hasattr(model.model, 'autoregressive_model_params'):
                 # Less likely, but handle if model has model attribute
                 policy_model = model.model
                 autoregressive_params = model.model.autoregressive_model_params
-                print("✓ Found policy model in model.model")
+                print("Found policy model in model.model")
             else:
                 # Debug: Print all available attributes to understand the structure
-                print(f"❌ Cannot find autoregressive_model_params. Model structure:")
+                print("Cannot find autoregressive_model_params. Model structure:")
                 print(f"Model type: {type(model)}")
                 print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_') and not callable(getattr(model, attr))]}")
                 
@@ -502,7 +521,7 @@ class TrainingBayesianOptimizer:
                     print(f"model.module type: {type(model.module)}")
                     print(f"model.module attributes: {[attr for attr in dir(model.module) if not attr.startswith('_') and not callable(getattr(model.module, attr))]}")
                 
-                print("❌ Could not locate autoregressive_model_params attribute")
+                print("Could not locate autoregressive_model_params attribute")
                 return False
             
             # Print current parameters
@@ -538,17 +557,28 @@ class TrainingBayesianOptimizer:
             
             # Now apply parameters
             if not policy_model or not autoregressive_params:
-                print("❌ Failed to find policy model or autoregressive_model_params")
+                print("Failed to find policy model or autoregressive_model_params")
                 return False
             
             # Update UCGM parameters in the autoregressive_model_params
-            print("✓ Updating autoregressive_model_params...")
+            print("Updating autoregressive_model_params...")
             autoregressive_params.use_ucgm = True
+            
+            # Update all 16 optimization parameters
+            print("Updating 16 optimization parameters:")
+            print("  UCGM Sampling parameters (6):")
             autoregressive_params.num_sampling_steps = params['num_sampling_steps']
             autoregressive_params.cfg = params['cfg']
             autoregressive_params.temperature = params['temperature']
+            autoregressive_params.consistc_ratio = params['consistc_ratio']
+            autoregressive_params.extrapol_ratio = params['extrapol_ratio']
+            autoregressive_params.rfba_gap_end = params['rfba_gap_end']
+            
+            print("  Local Attention parameters (2):")
             autoregressive_params.window_size = params['window_size']
             autoregressive_params.lambda_local = params['lambda_local']
+            
+            print("  UCGM Training parameters (8): via ucgmts_config")
             
             # Update UCGMTS config
             if not hasattr(autoregressive_params, 'ucgmts_config'):
@@ -560,23 +590,81 @@ class TrainingBayesianOptimizer:
             autoregressive_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
             autoregressive_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
             autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+            autoregressive_params.ucgmts_config.lab_drop_ratio = params['ucgmts_config']['lab_drop_ratio']
+            autoregressive_params.ucgmts_config.enhanced_ratio = params['ucgmts_config']['enhanced_ratio']
+            autoregressive_params.ucgmts_config.wt_cosine_loss = params['ucgmts_config']['wt_cosine_loss']
+            autoregressive_params.ucgmts_config.weight_function = params['ucgmts_config']['weight_function']
+            autoregressive_params.ucgmts_config.time_dist_ctrl = params['ucgmts_config']['time_dist_ctrl']
             
             # Also update the actual model components using the policy_model we found
-            print("✓ Updating model components...")
+            print("Updating model components...")
             if hasattr(policy_model, 'model') and hasattr(policy_model.model, 'diffactloss'):
                 diffactloss = policy_model.model.diffactloss
                 diffactloss.num_sampling_steps = params['num_sampling_steps']
-                print(f"✓ Updated DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
+                print(f"Updated DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
                 
                 if hasattr(diffactloss, 'ucgmts'):
                     ucgmts = diffactloss.ucgmts
-                    ucgmts.transport_type = params['ucgmts_config']['transport_type']
-                    ucgmts.consistc_ratio = params['ucgmts_config']['consistc_ratio']
-                    ucgmts.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
-                    ucgmts.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
-                    ucgmts.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
-                    ucgmts.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
-                    print("✓ Updated UCGMTS model components")
+                    
+                    # Update UCGMTS internal attributes (actual training parameters)
+                    # Update attributes according to UCGMTS.__init__ mapping
+                    ucgmts.tdr = params['ucgmts_config']['lab_drop_ratio']        # lab_drop_ratio -> tdr
+                    ucgmts.cor = params['ucgmts_config']['consistc_ratio']        # consistc_ratio -> cor
+                    ucgmts.enr = params['ucgmts_config']['enhanced_ratio']        # enhanced_ratio -> enr
+                    ucgmts.huc = params['ucgmts_config']['scaled_cbl_eps']       # scaled_cbl_eps -> huc
+                    ucgmts.emd = params['ucgmts_config']['ema_decay_rate']        # ema_decay_rate -> emd
+                    ucgmts.tdc = params['ucgmts_config']['time_dist_ctrl']        # time_dist_ctrl -> tdc
+                    ucgmts.wcl = params['ucgmts_config']['wt_cosine_loss']        # wt_cosine_loss -> wcl
+                    ucgmts.lwf = params['ucgmts_config']['weight_function']       # weight_function -> lwf
+                    
+                    # Update transport_type (affects alpha_in, gamma_in functions)
+                    if hasattr(ucgmts, 'transport_type'):
+                        ucgmts.transport_type = params['ucgmts_config']['transport_type']
+                        # Reinitialize transport functions
+                        from unified_video_action.model.ucgm.ucgm import TRANSPORTS
+                        transport = TRANSPORTS[ucgmts.transport_type]()
+                        ucgmts.alpha_in, ucgmts.gamma_in = transport.alpha_in, transport.gamma_in
+                        ucgmts.alpha_to, ucgmts.gamma_to = transport.alpha_to, transport.gamma_to
+                    
+                    # Update other possible attributes
+                    if hasattr(ucgmts, 'eng'):
+                        ucgmts.eng = params['ucgmts_config'].get('enhanced_range', [0.0, 0.75])
+                    if hasattr(ucgmts, 'ens'):
+                        ucgmts.ens = params['ucgmts_config'].get('enhanced_style', 'fc-vs-fe')
+                    
+                    # Update DiffActLossUCGM specific attributes
+                    diffactloss.stochasticity_ratio = params['ucgmts_config']['consistc_ratio']
+                    diffactloss.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+                    
+                    # Add extrapol_ratio support (create if not exists)
+                    if not hasattr(diffactloss, 'extrapol_ratio'):
+                        diffactloss.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    else:
+                        diffactloss.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    
+                    # Critical fix: Save optimized parameters to autoregressive_model_params
+                    # This ensures UCGMTS uses these parameters for reinitialization on next checkpoint load
+                    print("Critical fix: Saving optimized parameters to autoregressive_model_params for persistence")
+                    
+                    # Update autoregressive_model_params ucgmts_config
+                    autoregressive_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
+                    autoregressive_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
+                    autoregressive_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
+                    autoregressive_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
+                    autoregressive_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+                    autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    autoregressive_params.ucgmts_config.lab_drop_ratio = params['ucgmts_config']['lab_drop_ratio']
+                    autoregressive_params.ucgmts_config.enhanced_ratio = params['ucgmts_config']['enhanced_ratio']
+                    autoregressive_params.ucgmts_config.wt_cosine_loss = params['ucgmts_config']['wt_cosine_loss']
+                    autoregressive_params.ucgmts_config.weight_function = params['ucgmts_config']['weight_function']
+                    autoregressive_params.ucgmts_config.time_dist_ctrl = params['ucgmts_config']['time_dist_ctrl']
+                    
+                    print("Updated UCGMTS actual training parameters (internal attributes)")
+                    print(f"Updated DiffActLossUCGM sampling parameters:")
+                    print(f"  - stochasticity_ratio: {diffactloss.stochasticity_ratio}")
+                    print(f"  - rfba_gap_steps: {diffactloss.rfba_gap_steps}")
+                    print(f"  - extrapol_ratio: {diffactloss.extrapol_ratio}")
+                    print("Saved optimized parameters to autoregressive_model_params.ucgmts_config for persistence")
             
             # Print updated model parameters for verification
             print(f"\n{'='*50}")
@@ -596,21 +684,121 @@ class TrainingBayesianOptimizer:
             print(f"  ema_decay_rate: {autoregressive_params.ucgmts_config.ema_decay_rate}")
             print(f"  rfba_gap_steps: {autoregressive_params.ucgmts_config.rfba_gap_steps}")
             print(f"  extrapol_ratio: {autoregressive_params.ucgmts_config.extrapol_ratio}")
+            print(f"  lab_drop_ratio: {autoregressive_params.ucgmts_config.lab_drop_ratio}")
+            print(f"  enhanced_ratio: {autoregressive_params.ucgmts_config.enhanced_ratio}")
+            print(f"  wt_cosine_loss: {autoregressive_params.ucgmts_config.wt_cosine_loss}")
+            print(f"  weight_function: {autoregressive_params.ucgmts_config.weight_function}")
+            print(f"  time_dist_ctrl: {autoregressive_params.ucgmts_config.time_dist_ctrl}")
             
             # Verify the actual model components were updated
             if hasattr(policy_model, 'model') and hasattr(policy_model.model, 'diffactloss'):
                 diffactloss = policy_model.model.diffactloss
-                print(f"Verified DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
+                print(f"验证 DiffActLoss 参数:")
+                print(f"  num_sampling_steps: {diffactloss.num_sampling_steps}")
+                print(f"  stochasticity_ratio: {getattr(diffactloss, 'stochasticity_ratio', 'N/A')}")
+                print(f"  rfba_gap_steps: {getattr(diffactloss, 'rfba_gap_steps', 'N/A')}")
+                print(f"  extrapol_ratio: {getattr(diffactloss, 'extrapol_ratio', 'N/A')}")
+                
                 if hasattr(diffactloss, 'ucgmts'):
                     ucgmts = diffactloss.ucgmts
-                    print(f"Verified UCGMTS parameters:")
-                    print(f"  transport_type: {ucgmts.transport_type}")
-                    print(f"  consistc_ratio: {ucgmts.consistc_ratio}")
-                    print(f"  rfba_gap_steps: {ucgmts.rfba_gap_steps}")
-                    print(f"  extrapol_ratio: {ucgmts.extrapol_ratio}")
+                    print(f"验证 UCGMTS 实际训练参数（内部属性）:")
+                    print(f"  tdr (lab_drop_ratio): {ucgmts.tdr}")
+                    print(f"  cor (consistc_ratio): {ucgmts.cor}")
+                    print(f"  enr (enhanced_ratio): {ucgmts.enr}")
+                    print(f"  huc (scaled_cbl_eps): {ucgmts.huc}")
+                    print(f"  emd (ema_decay_rate): {ucgmts.emd}")
+                    print(f"  tdc (time_dist_ctrl): {ucgmts.tdc}")
+                    print(f"  wcl (wt_cosine_loss): {ucgmts.wcl}")
+                    print(f"  lwf (weight_function): {ucgmts.lwf}")
+                    
+                    # 验证其他内部属性
+                    print(f"验证其他 UCGMTS 内部属性:")
+                    print(f"  transport_type: {getattr(ucgmts, 'transport_type', 'N/A')}")
+                    print(f"  eng (enhanced_range): {getattr(ucgmts, 'eng', 'N/A')}")
+                    print(f"  ens (enhanced_style): {getattr(ucgmts, 'ens', 'N/A')}")
+                    print(f"  cmd (ema_cmd): {getattr(ucgmts, 'cmd', 'N/A')}")
+                    print(f"  step: {getattr(ucgmts, 'step', 'N/A')}")
+                    
+                    # 验证 transport 函数是否正确更新
+                    if hasattr(ucgmts, 'alpha_in') and hasattr(ucgmts, 'gamma_in'):
+                        print(f"  alpha_in 函数: {type(ucgmts.alpha_in).__name__}")
+                        print(f"  gamma_in 函数: {type(ucgmts.gamma_in).__name__}")
+                        print(f"  alpha_to 函数: {type(ucgmts.alpha_to).__name__}")
+                        print(f"  gamma_to 函数: {type(ucgmts.gamma_to).__name__}")
             print(f"{'='*50}")
             
-            print("✅ Parameters successfully applied to model!")
+            # Update workspace configuration to persist parameters
+            print("Updating workspace configuration for persistence...")
+            if hasattr(self, 'workspace') and self.workspace is not None:
+                try:
+                    # Update the workspace's config to ensure parameters persist
+                    workspace_cfg = self.workspace.cfg
+                    if hasattr(workspace_cfg, 'model') and hasattr(workspace_cfg.model, 'policy'):
+                        autoregressive_params = workspace_cfg.model.policy.autoregressive_model_params
+                        
+                        # Update autoregressive_model_params
+                        autoregressive_params.use_ucgm = True
+                        autoregressive_params.num_sampling_steps = params['num_sampling_steps']
+                        autoregressive_params.cfg = params['cfg']
+                        autoregressive_params.temperature = params['temperature']
+                        autoregressive_params.window_size = params['window_size']
+                        autoregressive_params.lambda_local = params['lambda_local']
+                        
+                        # Update ucgmts_config
+                        if not hasattr(autoregressive_params, 'ucgmts_config'):
+                            autoregressive_params.ucgmts_config = OmegaConf.create({})
+                        
+                        autoregressive_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
+                        autoregressive_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
+                        autoregressive_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
+                        autoregressive_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
+                        autoregressive_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
+                        autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                        autoregressive_params.ucgmts_config.lab_drop_ratio = params['ucgmts_config']['lab_drop_ratio']
+                        autoregressive_params.ucgmts_config.enhanced_ratio = params['ucgmts_config']['enhanced_ratio']
+                        autoregressive_params.ucgmts_config.wt_cosine_loss = params['ucgmts_config']['wt_cosine_loss']
+                        autoregressive_params.ucgmts_config.weight_function = params['ucgmts_config']['weight_function']
+                        autoregressive_params.ucgmts_config.time_dist_ctrl = params['ucgmts_config']['time_dist_ctrl']
+                        
+                        print("Updated workspace.cfg with optimized parameters")
+                        
+                except Exception as e:
+                    print(f"Warning: Could not update workspace config: {e}")
+            
+            # Final verification: Ensure all 16 parameters are properly handled
+            print(f"\n{'='*60}")
+            print(f"Final verification: 16 optimization parameters processing status")
+            print(f"{'='*60}")
+            
+            # Verify autoregressive_model_params parameters
+            print("Parameters in autoregressive_model_params:")
+            print(f"  num_sampling_steps: {autoregressive_params.num_sampling_steps}")
+            print(f"  cfg: {autoregressive_params.cfg}")
+            print(f"  temperature: {autoregressive_params.temperature}")
+            print(f"  consistc_ratio: {autoregressive_params.consistc_ratio}")
+            print(f"  extrapol_ratio: {autoregressive_params.extrapol_ratio}")
+            print(f"  rfba_gap_end: {autoregressive_params.rfba_gap_end}")
+            print(f"  window_size: {autoregressive_params.window_size}")
+            print(f"  lambda_local: {autoregressive_params.lambda_local}")
+            
+            print("Parameters in ucgmts_config:")
+            print(f"  transport_type: {autoregressive_params.ucgmts_config.transport_type}")
+            print(f"  consistc_ratio: {autoregressive_params.ucgmts_config.consistc_ratio}")
+            print(f"  scaled_cbl_eps: {autoregressive_params.ucgmts_config.scaled_cbl_eps}")
+            print(f"  ema_decay_rate: {autoregressive_params.ucgmts_config.ema_decay_rate}")
+            print(f"  rfba_gap_steps: {autoregressive_params.ucgmts_config.rfba_gap_steps}")
+            print(f"  extrapol_ratio: {autoregressive_params.ucgmts_config.extrapol_ratio}")
+            print(f"  lab_drop_ratio: {autoregressive_params.ucgmts_config.lab_drop_ratio}")
+            print(f"  enhanced_ratio: {autoregressive_params.ucgmts_config.enhanced_ratio}")
+            print(f"  wt_cosine_loss: {autoregressive_params.ucgmts_config.wt_cosine_loss}")
+            print(f"  weight_function: {autoregressive_params.ucgmts_config.weight_function}")
+            print(f"  time_dist_ctrl: {autoregressive_params.ucgmts_config.time_dist_ctrl}")
+            
+            print(f"\nAll 16 optimization parameters successfully applied to model and saved to configuration!")
+            print(f"These parameters will be automatically restored on next checkpoint load!")
+            print(f"{'='*60}")
+            
+            print("Parameters successfully applied to model!")
             return True
                 
         except Exception as e:

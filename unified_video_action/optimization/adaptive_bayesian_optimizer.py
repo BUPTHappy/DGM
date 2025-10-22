@@ -98,7 +98,7 @@ class AdaptiveUCGMBayesianOptimizer:
         """
         性能优先优化：允许更多步数以获得最佳效果
         """
-        print("🎯 Optimizing for PERFORMANCE priority...")
+        print("Optimizing for PERFORMANCE priority...")
         
         # 允许更多步数
         num_sampling_steps = trial.suggest_categorical('num_sampling_steps', [2, 3, 4, 5, 6, 7, 8, 9, 10])
@@ -243,9 +243,9 @@ class AdaptiveUCGMBayesianOptimizer:
         self.best_params = self._build_ucgmts_config(raw_best_params.copy())
         best_score = self.study.best_value
         
-        print(f"\n🎉 Optimization completed!")
-        print(f"📊 Best score: {best_score:.4f}")
-        print(f"⚙️ Best parameters:")
+        print(f"\nOptimization completed!")
+        print(f"Best score: {best_score:.4f}")
+        print(f"Best parameters:")
         for key, value in self.best_params.items():
             if key == 'ucgmts_config':
                 print(f"   {key}:")

@@ -1,6 +1,6 @@
 # Fast Policy
 
-## 🛠️ Installation
+## Installation
 Build and run the Docker container:
 ```console
 $ docker build --platform=linux/amd64 -t user/project:latest .
