@@ -14,6 +14,7 @@ import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from omegaconf import OmegaConf, open_dict
 from unified_video_action.optimization.bayesian_optimizer import UCGMBayesianOptimizer
+from unified_video_action.optimization.adaptive_bayesian_optimizer import AdaptiveUCGMBayesianOptimizer, OptimizationMode
 
 
 class TrainingBayesianOptimizer:
@@ -32,7 +33,8 @@ class TrainingBayesianOptimizer:
                  final_n_test: int = 5,    # Final optimization test count
                  device: str = "cuda:0",
                  output_dir: str = "./bayesian_optimization_logs",
-                 use_best_checkpoint_for_final: bool = True):
+                 use_best_checkpoint_for_final: bool = True,
+                 optimization_mode: str = "balanced"):
         """
         Initialize the training-integrated Bayesian optimizer.
         
@@ -47,6 +49,7 @@ class TrainingBayesianOptimizer:
             device: Device for evaluation
             output_dir: Output directory for optimization logs
             use_best_checkpoint_for_final: Whether to use best checkpoint for final optimization
+            optimization_mode: Optimization mode ("performance", "speed", "balanced")
         """
         self.config = config
         self.start_epoch = start_epoch
@@ -58,6 +61,7 @@ class TrainingBayesianOptimizer:
         self.device = device
         self.output_dir = output_dir
         self.use_best_checkpoint_for_final = use_best_checkpoint_for_final
+        self.optimization_mode = optimization_mode
         
         # Create output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -67,8 +71,12 @@ class TrainingBayesianOptimizer:
         self.best_params = None
         self.best_score = -float('inf')
         
-        # Initialize optimizer
-        self.optimizer = UCGMBayesianOptimizer(max_trials=max_trials)
+        # Initialize adaptive optimizer
+        optimization_mode_enum = OptimizationMode(optimization_mode)
+        self.optimizer = AdaptiveUCGMBayesianOptimizer(
+            max_trials=max_trials, 
+            optimization_mode=optimization_mode_enum
+        )
         
         print(f"TrainingBayesianOptimizer initialized:")
         print(f"  Start epoch: {start_epoch}")
@@ -77,6 +85,7 @@ class TrainingBayesianOptimizer:
         print(f"  Max trials (final): {final_trials}")
         print(f"  N test (normal): {n_test}")
         print(f"  N test (final): {final_n_test}")
+        print(f"  Optimization mode: {optimization_mode}")
         print(f"  Use best checkpoint for final: {use_best_checkpoint_for_final}")
         print(f"  Output dir: {output_dir}")
     
@@ -170,12 +179,18 @@ class TrainingBayesianOptimizer:
                 cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
                 cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
                 
+                # UCGM Training parameters
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.lab_drop_ratio = params['ucgmts_config']['lab_drop_ratio']
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.enhanced_ratio = params['ucgmts_config']['enhanced_ratio']
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.wt_cosine_loss = params['ucgmts_config']['wt_cosine_loss']
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.weight_function = params['ucgmts_config']['weight_function']
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.time_dist_ctrl = params['ucgmts_config']['time_dist_ctrl']
             
             # Set test count
             if "libero" in cfg.task.name:

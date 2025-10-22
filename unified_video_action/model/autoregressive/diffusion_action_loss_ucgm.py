@@ -6,9 +6,8 @@ from unified_video_action.model.ucgm.ucgm import UCGMTS
 from unified_video_action.model.autoregressive.diffusion_loss import SimpleMLPAdaLN
 
 
-
 class DiffActLossUCGM(nn.Module):
-    """Diffusion Loss"""
+    """Diffusion Loss with UCGM"""
 
     def __init__(
         self,
@@ -22,7 +21,6 @@ class DiffActLossUCGM(nn.Module):
         act_diff_training_steps=1000,
         act_diff_testing_steps="100",
         act_model_type="conv_fc",
-        diff_model_type="MLP",
         ucgmts_config={},
         **kwargs
     ):
@@ -87,85 +85,45 @@ class DiffActLossUCGM(nn.Module):
                 nn.ReLU(),  # Add an activation function (optional, but common practice)
                 nn.Linear(256, 16)
             )
-        elif self.act_model_type == 'none':
-            pass
+            
         else:
             raise NotImplementedError
-        
-        if diff_model_type == "MLP":
-            self.net = SimpleMLPAdaLN(
-                in_channels=target_channels,
-                model_channels=width,
-                out_channels=target_channels,
-                z_channels=z_channels,
-                num_res_blocks=depth,
-                grad_checkpointing=grad_checkpointing,
-            )
-        elif diff_model_type == "DiT":
-            from unified_video_action.model.autoregressive.dit import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
-        elif diff_model_type == "DiT_hybrid_ca_sa":
-            from unified_video_action.model.autoregressive.dit_hybrid_ca_sa import DiT
-            #from unified_video_action.model.autoregressive.dit_patches import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
-        elif diff_model_type == "DiT_patches_hybrid":
-            from unified_video_action.model.autoregressive.dit_hybrid import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
-        elif diff_model_type == "DiT_patches_hybrid_cross_only":
-            from unified_video_action.model.autoregressive.dit_hybrid_cross_only import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
-        else:
-            raise NotImplementedError(f"Unknown diffusion model type: {diff_model_type}")
-        
-        self.diff_model_type = diff_model_type
+
+        # Use only MLP architecture
+        self.net = SimpleMLPAdaLN(
+            in_channels=target_channels,
+            model_channels=width,
+            out_channels=target_channels * 2,  # for vlb loss
+            z_channels=z_channels,
+            num_res_blocks=depth,
+            grad_checkpointing=grad_checkpointing,
+        )
+
         self.num_sampling_steps = num_sampling_steps
 
-        print(f"DiffActLossUCGM: num_sampling_steps: {num_sampling_steps}"
-              )
+        print(f"DiffActLossUCGM: num_sampling_steps: {num_sampling_steps}")
         print("UCGMTS config values:")
         print("  transport_type:", ucgmts_config.get("transport_type", "Linear"))
         print("  scaled_cbl_eps:", ucgmts_config.get("scaled_cbl_eps", 0.0))
         print("  ema_decay_rate:", ucgmts_config.get("ema_decay_rate", 0.0))
         print("  consistc_ratio:", ucgmts_config.get("consistc_ratio", 1.0))
         print("  rfba_gap_steps:", ucgmts_config.get("rfba_gap_steps", [0.001, 0.5]))
+        print("  lab_drop_ratio:", ucgmts_config.get("lab_drop_ratio", 0.1))
+        print("  enhanced_ratio:", ucgmts_config.get("enhanced_ratio", 0.0))
+        print("  wt_cosine_loss:", ucgmts_config.get("wt_cosine_loss", False))
+        print("  weight_function:", ucgmts_config.get("weight_function", None))
+        print("  time_dist_ctrl:", ucgmts_config.get("time_dist_ctrl", [1.0, 1.0, 1.0]))
 
         self.ucgmts = UCGMTS(
             transport_type=ucgmts_config.get("transport_type", "Linear"),
             scaled_cbl_eps=ucgmts_config.get("scaled_cbl_eps", 0.0),
             ema_decay_rate=ucgmts_config.get("ema_decay_rate", 0.0),
             consistc_ratio=ucgmts_config.get("consistc_ratio", 1.0),
+            lab_drop_ratio=ucgmts_config.get("lab_drop_ratio", 0.1),
+            enhanced_ratio=ucgmts_config.get("enhanced_ratio", 0.0),
+            wt_cosine_loss=ucgmts_config.get("wt_cosine_loss", False),
+            weight_funcion=ucgmts_config.get("weight_function", None),
+            time_dist_ctrl=ucgmts_config.get("time_dist_ctrl", [1.0, 1.0, 1.0])
         )
         self.stochasticity_ratio = ucgmts_config.get("consistc_ratio", 1.0)
         self.rfba_gap_steps = ucgmts_config.get("rfba_gap_steps", [0.001, 0.5])
@@ -205,16 +163,12 @@ class DiffActLossUCGM(nn.Module):
         elif self.act_model_type == 'fc2':
             z = self.fc(z.transpose(1, 2))
             z = z.transpose(1, 2)
-        elif self.act_model_type == 'none':
-            pass
         else:
             raise NotImplementedError
 
-        
-
-        if self.diff_model_type == "MLP":
-            z = z.reshape(bsz * seq_len, -1)
-            target = target.reshape(bsz * seq_len, -1)
+        # Reshape for MLP processing
+        z = z.reshape(bsz * seq_len, -1)
+        target = target.reshape(bsz * seq_len, -1)
 
         loss = self.ucgmts.training_step(model=self.net, x=target, c=z)
         loss = torch.mean(loss)
@@ -252,19 +206,14 @@ class DiffActLossUCGM(nn.Module):
         elif self.act_model_type == 'fc2':
             z = self.fc(z.transpose(1, 2))
             z = z.transpose(1, 2)
-        elif self.act_model_type == 'none':
-            pass
         else:
             raise NotImplementedError
         
         bsz, seq_len, _ = z.shape
 
-        if self.diff_model_type == "MLP":
-            z = rearrange(z, "b t c -> (b t) c")
-            noise = torch.randn(z.shape[0], self.in_channels, device=z.device)
-        else:
-            noise = torch.randn(z.shape[0], 16, self.in_channels, device=z.device)
-
+        # Reshape for MLP processing
+        z = rearrange(z, "b t c -> (b t) c")
+        noise = torch.randn(z.shape[0], self.in_channels, device=z.device)
 
         model_kwargs = dict(c=z)
 
@@ -279,9 +228,8 @@ class DiffActLossUCGM(nn.Module):
                 rfba_gap_steps=self.rfba_gap_steps,
                 **model_kwargs,)[-1]
 
-        if sampled_token.dim() == 2:
-            sampled_token = rearrange(
-                sampled_token, "(b t) c -> b t c", b=bsz
-            )
+        sampled_token = rearrange(
+            sampled_token, "(b t) c -> b t c", b=bsz
+        )
         return sampled_token
 

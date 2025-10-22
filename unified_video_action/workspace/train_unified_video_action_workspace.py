@@ -95,7 +95,8 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                 final_n_test=cfg.bayesian_optimization.final_n_test,
                 device=cfg.bayesian_optimization.device,
                 output_dir=cfg.bayesian_optimization.output_dir,
-                use_best_checkpoint_for_final=cfg.bayesian_optimization.use_best_checkpoint_for_final
+                use_best_checkpoint_for_final=cfg.bayesian_optimization.use_best_checkpoint_for_final,
+                optimization_mode=cfg.bayesian_optimization.get('optimization_mode', 'balanced')
             )
             print(f"Bayesian optimization enabled: start_epoch={cfg.bayesian_optimization.start_epoch}, interval={cfg.bayesian_optimization.interval}")
             

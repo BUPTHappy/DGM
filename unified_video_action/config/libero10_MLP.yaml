@@ -77,3 +77,79 @@ multi_run:
   wandb_name_base: train_uva_libero10
 
 save_folder : profiling/ucgm_dit_vs_mlp/dit.txt
+
+# Bayesian Optimization Configuration for Libero10 MLP
+bayesian_optimization:
+  enabled: true
+  optimization_mode: "balanced"  # 可选: "performance", "speed", "balanced"
+  start_epoch: 2500  # 在训练后期开始优化，让模型先充分训练
+  interval: 50      # 每50个epoch优化一次，减少频率
+  max_trials: 8     # 中期优化用8个trials
+  final_trials: 15  # 最终优化用15个trials
+  n_test: 3         # 正常优化用3个test
+  final_n_test: 5   # 最终优化用5个test，更充分的评估
+  device: cuda:0
+  output_dir: ./bayesian_optimization_logs_libero10_mlp
+  use_best_checkpoint_for_final: true  # 最终优化使用最优checkpoint
+  
+  # Parameter search space for Libero10 MLP (16个参数)
+  param_space:
+    # UCGM Sampling parameters (6个)
+    num_sampling_steps:
+      type: int
+      bounds: [1, 4]
+    cfg:
+      type: float
+      bounds: [1.0, 2.0]
+    temperature:
+      type: float
+      bounds: [0.8, 1.2]
+    consistc_ratio:
+      type: float
+      bounds: [0.8, 1.0]
+    extrapol_ratio:
+      type: float
+      bounds: [0.3, 0.8]
+    rfba_gap_end:
+      type: float
+      bounds: [0.1, 0.5]
+    
+    # Local attention parameters (2个)
+    window_size:
+      type: int
+      bounds: [4, 16]
+    lambda_local:
+      type: float
+      bounds: [0.1, 1.0]
+    
+    # UCGM Training parameters (8个)
+    ema_decay_rate:
+      type: float
+      bounds: [0.0, 0.999]
+    scaled_cbl_eps:
+      type: float
+      bounds: [0.0, 10.0]
+    transport_type:
+      type: categorical
+      choices: ['Linear', 'TrigFlow', 'Cosine', 'DDPM']
+    lab_drop_ratio:
+      type: float
+      bounds: [0.0, 0.3]
+    enhanced_ratio:
+      type: float
+      bounds: [0.0, 2.0]
+    wt_cosine_loss:
+      type: categorical
+      choices: [True, False]
+    weight_function:
+      type: categorical
+      choices: [None, 'Cosine']
+    time_dist_ctrl_0:
+      type: float
+      bounds: [0.5, 2.5]
+    time_dist_ctrl_1:
+      type: float
+      bounds: [0.5, 2.5]
+    time_dist_ctrl_2:
+      type: float
+      bounds: [0.5, 2.5]

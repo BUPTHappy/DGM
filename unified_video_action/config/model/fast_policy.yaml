@@ -61,7 +61,6 @@ policy:
   action_model_params:
     predict_action: True
     act_model_type: conv_fc
-    diff_model_type: MLP
   
   shift_action: True
     
