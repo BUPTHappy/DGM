@@ -13,7 +13,6 @@ import dill
 import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from omegaconf import OmegaConf, open_dict
-from unified_video_action.optimization.bayesian_optimizer import UCGMBayesianOptimizer
 from unified_video_action.optimization.adaptive_bayesian_optimizer import AdaptiveUCGMBayesianOptimizer, OptimizationMode
 
 
@@ -331,7 +330,10 @@ class TrainingBayesianOptimizer:
             print(f"Normal phase: max_trials={max_trials}, n_test={n_test}")
         
         # Create a temporary optimizer with adjusted parameters
-        temp_optimizer = UCGMBayesianOptimizer(max_trials=max_trials)
+        temp_optimizer = AdaptiveUCGMBayesianOptimizer(
+            max_trials=max_trials,
+            optimization_mode=self.optimization_mode
+        )
         
         def objective_function(params):
             return self.evaluate_model_with_params(params, checkpoint_path)
