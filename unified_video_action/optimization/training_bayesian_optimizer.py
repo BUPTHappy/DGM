@@ -462,14 +462,34 @@ class TrainingBayesianOptimizer:
             
             # Update model parameters
             # Check if model has autoregressive_model_params attribute
+            autoregressive_params = None
+            
+            # Try different ways to access autoregressive_model_params
             if hasattr(model, 'autoregressive_model_params'):
                 autoregressive_params = model.autoregressive_model_params
+                print("Found autoregressive_model_params directly on model")
             elif hasattr(model, 'model') and hasattr(model.model, 'autoregressive_model_params'):
                 # Handle case where model is wrapped (e.g., DDP wrapper)
                 autoregressive_params = model.model.autoregressive_model_params
+                print("Found autoregressive_model_params on model.model")
+            elif hasattr(model, 'module') and hasattr(model.module, 'autoregressive_model_params'):
+                # Handle case where model is wrapped with module attribute
+                autoregressive_params = model.module.autoregressive_model_params
+                print("Found autoregressive_model_params on model.module")
             else:
                 print(f"Model type: {type(model)}")
                 print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
+                
+                # Check if model has a model attribute
+                if hasattr(model, 'model'):
+                    print(f"model.model type: {type(model.model)}")
+                    print(f"model.model attributes: {[attr for attr in dir(model.model) if not attr.startswith('_')]}")
+                
+                # Check if model has a module attribute
+                if hasattr(model, 'module'):
+                    print(f"model.module type: {type(model.module)}")
+                    print(f"model.module attributes: {[attr for attr in dir(model.module) if not attr.startswith('_')]}")
+                
                 print("Model does not have autoregressive_model_params attribute")
                 return False
             
