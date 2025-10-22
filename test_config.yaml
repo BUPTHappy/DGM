@@ -1,0 +1,29 @@
+defaults:
+  - _self_
+  - task: pusht
+  - model: fast_policy
+
+# 最小化配置用于测试
+dataloader:
+  batch_size: 16  # 减小batch size
+  num_workers: 0
+  persistent_workers: false
+  pin_memory: false
+  shuffle: true
+
+val_dataloader:
+  batch_size: 16
+  num_workers: 0
+  persistent_workers: false
+  pin_memory: false
+  shuffle: false
+
+training:
+  checkpoint_every: 10
+  debug: true  # 开启debug模式
+  device: cuda:0
+  num_epochs: 5  # 只训练5个epoch用于测试
+
+# 关闭贝叶斯优化进行测试
+bayesian_optimization:
+  enabled: false

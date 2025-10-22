@@ -93,7 +93,7 @@ class DiffActLossUCGM(nn.Module):
         self.net = SimpleMLPAdaLN(
             in_channels=target_channels,
             model_channels=width,
-            out_channels=target_channels * 2,  # for vlb loss
+            out_channels=target_channels,  # 修改：只输出target_channels，不是target_channels * 2
             z_channels=z_channels,
             num_res_blocks=depth,
             grad_checkpointing=grad_checkpointing,
