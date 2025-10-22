@@ -342,9 +342,10 @@ class TrainingBayesianOptimizer:
             print(f"Normal phase: max_trials={max_trials}, n_test={n_test}")
         
         # Create a temporary optimizer with adjusted parameters
+        optimization_mode_enum = OptimizationMode(self.optimization_mode)
         temp_optimizer = AdaptiveUCGMBayesianOptimizer(
             max_trials=max_trials,
-            optimization_mode=self.optimization_mode
+            optimization_mode=optimization_mode_enum
         )
         
         def objective_function(params):
