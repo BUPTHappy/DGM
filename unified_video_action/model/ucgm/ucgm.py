@@ -155,6 +155,7 @@ class UCGMTS(torch.nn.Module):
                 Defaults to [1.0, 1.0, 1.0].
         """
         super().__init__()
+        self.transport_type = transport_type  # 添加transport_type属性
         self.tdr = lab_drop_ratio
         self.cor = consistc_ratio
         self.enr = enhanced_ratio

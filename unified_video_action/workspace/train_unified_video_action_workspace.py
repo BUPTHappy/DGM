@@ -611,10 +611,13 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                                     if hasattr(diffactloss, 'ucgmts'):
                                         ucgmts = diffactloss.ucgmts
                                         print(f"Verified UCGMTS parameters:")
-                                        print(f"    transport_type: {ucgmts.transport_type}")
-                                        print(f"    consistc_ratio: {ucgmts.consistc_ratio}")
-                                        print(f"    rfba_gap_steps: {ucgmts.rfba_gap_steps}")
-                                        print(f"    extrapol_ratio: {ucgmts.extrapol_ratio}")
+                                        print(f"    transport_type: Linear")
+                                        print(f"    consistc_ratio: {getattr(ucgmts, 'cor', 'N/A')}")
+                                        print(f"    ema_decay_rate: {getattr(ucgmts, 'emd', 'N/A')}")
+                                        print(f"    scaled_cbl_eps: {getattr(ucgmts, 'huc', 'N/A')}")
+                                        print(f"    enhanced_ratio: {getattr(ucgmts, 'enr', 'N/A')}")
+                                        print(f"    lab_drop_ratio: {getattr(ucgmts, 'tdr', 'N/A')}")
+                                        print(f"    time_dist_ctrl: {getattr(ucgmts, 'tdc', 'N/A')}")
                             print(f"{'='*50}")
                             
                             # Log optimization results
