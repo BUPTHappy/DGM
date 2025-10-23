@@ -20,7 +20,7 @@ class AdaptiveUCGMBayesianOptimizer:
     """
     
     def __init__(self, max_trials: int = 30, optimization_mode: OptimizationMode = OptimizationMode.BALANCED):
-        self.max_trials = max_trials
+        self.max_trials = int(max_trials)  # 确保max_trials是整数
         self.optimization_mode = optimization_mode
         self.study = optuna.create_study(direction='maximize')
         self.best_params = None
@@ -254,6 +254,12 @@ class AdaptiveUCGMBayesianOptimizer:
         
         # Process the best parameters to include ucgmts_config structure
         raw_best_params = self.study.best_params
+        
+        # 添加固定参数，因为Optuna不会记录这些
+        raw_best_params['transport_type'] = 'Linear'
+        raw_best_params['wt_cosine_loss'] = False
+        raw_best_params['weight_function'] = None
+        
         self.best_params = self._build_ucgmts_config(raw_best_params.copy())
         best_score = self.study.best_value
         
