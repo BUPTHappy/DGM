@@ -73,6 +73,7 @@ multi_run:
 
 payload: checkpoints/pusht_final_2/checkpoints/latest.ckpt  # 加载预训练权重
 freeze_submodules: true
+strict_checkpoint_loading: false
 
 save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
 

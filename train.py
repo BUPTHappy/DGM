@@ -89,10 +89,22 @@ def main(cfg: OmegaConf):
     if cfg.payload:
         print(f"Loading checkpoint from: {cfg.payload}")
         payload = torch.load(open(cfg.payload, "rb"), pickle_module=dill)
-        if cfg.training.use_ema:
-            workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=False)
+        
+        # 判断加载类型：预训练模型 vs 恢复训练
+        # 预训练模型通常不包含训练状态信息，恢复训练的checkpoint包含epoch, global_step等
+        is_pretrained_model = "epoch" not in payload.get("pickles", {}) and "global_step" not in payload.get("pickles", {})
+        
+        if is_pretrained_model:
+            print("[加载类型] 预训练模型 - 将drop整个diffactloss网络")
+            diffhead_finetuning = True
         else:
-            workspace.load_payload_new(payload, exclude_keys=['ema_model'], include_keys=None, diffhead_finetuning=True, strict=False)
+            print("[加载类型] 恢复训练checkpoint - 尝试完整加载")
+            diffhead_finetuning = False
+            
+        if cfg.training.use_ema:
+            workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=diffhead_finetuning, strict=False)
+        else:
+            workspace.load_payload_new(payload, exclude_keys=['ema_model'], include_keys=None, diffhead_finetuning=diffhead_finetuning, strict=False)
 
     if cfg.freeze_submodules:
         workspace.freeze_submodules(action_only=True)

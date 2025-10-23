@@ -103,27 +103,35 @@ class BaseWorkspace:
                     if key == "optimizer": #and "base_optimizer_state" in value_new:
                         # value_new = value_new["base_optimizer_state"]
                         continue  # HACK: optimizer state is not compatible with multi-node training. Should use accelerate.load_state
+                    # 根据不同的加载场景处理参数
                     if diffhead_finetuning:
+                        # 场景1: 加载预训练模型 (pusht.ckpt) - 需要drop整个diffactloss网络
+                        # 因为预训练模型没有UCGM，MLP输出维度不匹配
                         drop_prefixes = ("model.diffloss", "model.diffactloss")
-                        # drop_prefixes = ("model.diffactloss")
                         buff = {}
                         for k, v in value_new.items():
                             if k.startswith(drop_prefixes):
-                                print(f"Dropped {k}")
+                                print(f"[预训练模型] Dropped {k}")
                             else:
                                 buff[k] = v
                         value_new = buff
-
-                    
-                    # Skip UCGM params and diffactloss.net.final_layer (dimensions don't match)
-                    drop_prefixes = ("model.diffactloss.ucgmts", "model.diffactloss.net.final_layer")
-                    buff = {}
-                    for k, v in value_new.items():
-                        if k.startswith(drop_prefixes):
-                            print(f"Dropped {k}")
-                        else:
-                            buff[k] = v
-                    value_new = buff
+                    else:
+                        # 场景2: 恢复自己的训练checkpoint - 尝试完整加载，如果失败则跳过UCGM相关参数
+                        if not kwargs.get('strict', True):
+                            # 检查是否包含UCGM参数，如果有则不匹配，需要跳过
+                            has_ucgm_params = any(k.startswith("model.diffactloss.ucgmts") or 
+                                                 k.startswith("model.diffactloss.net.final_layer") 
+                                                 for k in value_new.keys())
+                            if has_ucgm_params:
+    
+                                drop_prefixes = ("model.diffactloss.ucgmts", "model.diffactloss.net.final_layer")
+                                buff = {}
+                                for k, v in value_new.items():
+                                    if k.startswith(drop_prefixes):
+                                        print(f"[Resume Training] Dropped {k}")
+                                    else:
+                                        buff[k] = v
+                                value_new = buff
                     print(f"Loading {key}")
                     load_result = self.__dict__[key].load_state_dict(value_new, **kwargs)
                 except Exception as e:
