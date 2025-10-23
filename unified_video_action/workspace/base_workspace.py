@@ -115,8 +115,8 @@ class BaseWorkspace:
                         value_new = buff
 
                     
-                    # Skip UCGM params, keep diffactloss.net (dimensions match now)
-                    drop_prefixes = ("model.diffactloss.ucgmts")
+                    # Skip UCGM params and diffactloss.net (dimensions don't match)
+                    drop_prefixes = ("model.diffactloss.ucgmts", "model.diffactloss.net")
                     buff = {}
                     for k, v in value_new.items():
                         if k.startswith(drop_prefixes):
