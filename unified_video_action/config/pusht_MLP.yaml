@@ -29,7 +29,7 @@ training:
   max_train_steps: null
   max_val_steps: null
   num_epochs: 200
-  resume: true
+  resume: false
   rollout_every: 1
   sample_every: 5
   seed: 42
