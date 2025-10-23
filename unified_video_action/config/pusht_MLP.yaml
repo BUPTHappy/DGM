@@ -71,7 +71,7 @@ multi_run:
   run_dir: data/outputs/train_uva_pusht
   wandb_name_base: train_uva_pusht
 
-payload: checkpoints/pusht_final_2/checkpoints  # 加载预训练权重
+payload: checkpoints/pusht_final_2/checkpoints/latest.ckpt  # 加载预训练权重
 freeze_submodules: true
 
 save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
