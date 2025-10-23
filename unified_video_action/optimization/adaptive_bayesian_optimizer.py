@@ -52,17 +52,19 @@ class AdaptiveUCGMBayesianOptimizer:
         wt_cosine_loss = False  # 固定不使用cosine loss
         weight_function = None  # 固定不使用weight function
         
-        # 统一的参数范围，不根据步数强制划分
-        # 让优化器自由探索，只在步数上做限制
-        consistc_ratio = trial.suggest_float('consistc_ratio', 0.0, 1.0)  # 全范围
-        ema_decay_rate = trial.suggest_float('ema_decay_rate', 0.0, 0.999)  # 全范围
-        scaled_cbl_eps = trial.suggest_float('scaled_cbl_eps', 0.0, 10.0)  # 全范围
-        rfba_gap_end = trial.suggest_float('rfba_gap_end', 0.001, 0.8)  # 全范围
-        extrapol_ratio = trial.suggest_float('extrapol_ratio', 0.0, 0.6)  # 全范围
+        # 基于优秀参数缩小范围，提高优化效率
+        # 优秀参数: consistc_ratio=0.6035, ema_decay_rate=0.8696, scaled_cbl_eps=9.5614
+        consistc_ratio = trial.suggest_float('consistc_ratio', 0.3, 0.8)  # 缩小范围
+        ema_decay_rate = trial.suggest_float('ema_decay_rate', 0.7, 0.95)  # 缩小范围
+        scaled_cbl_eps = trial.suggest_float('scaled_cbl_eps', 5.0, 12.0)  # 缩小范围
+        rfba_gap_end = trial.suggest_float('rfba_gap_end', 0.1, 0.5)  # 缩小范围
+        extrapol_ratio = trial.suggest_float('extrapol_ratio', 0.1, 0.4)  # 缩小范围
+        # 基于优秀参数缩小时间分布控制范围
+        # 优秀参数: time_dist_ctrl=[2.2044, 0.9469, 0.7631]
         time_dist_ctrl = [
-            trial.suggest_float('time_dist_ctrl_0', 0.5, 2.5),
-            trial.suggest_float('time_dist_ctrl_1', 0.5, 2.5),
-            trial.suggest_float('time_dist_ctrl_2', 0.5, 2.5)
+            trial.suggest_float('time_dist_ctrl_0', 1.5, 2.5),  # 缩小范围
+            trial.suggest_float('time_dist_ctrl_1', 0.5, 1.5),  # 缩小范围
+            trial.suggest_float('time_dist_ctrl_2', 0.5, 1.5)   # 缩小范围
         ]
 
         # 其他参数保持相对宽松的范围
@@ -70,21 +72,24 @@ class AdaptiveUCGMBayesianOptimizer:
             # UCGM Sampling parameters
             'consistc_ratio': consistc_ratio,
             'rfba_gap_end': rfba_gap_end,
-            'temperature': trial.suggest_float('temperature', 0.7, 1.2),
+            'temperature': trial.suggest_float('temperature', 0.8, 1.1),  # 基于优秀参数0.9209缩小范围
             'num_sampling_steps': num_sampling_steps,
-            'cfg': trial.suggest_float('cfg', 0.8, 1.5),
+            'cfg': trial.suggest_float('cfg', 0.9, 1.2),  # 基于优秀参数1.0343缩小范围
             'extrapol_ratio': extrapol_ratio,
             
-            # Local attention parameters
-            'window_size': trial.suggest_int('window_size', 0, 15),
-            'lambda_local': trial.suggest_float('lambda_local', 0.01, 0.8),
+            # 基于优秀参数缩小局部注意力参数范围
+            # 优秀参数: window_size=10, lambda_local=0.7250
+            'window_size': trial.suggest_int('window_size', 8, 12),  # 缩小范围
+            'lambda_local': trial.suggest_float('lambda_local', 0.5, 0.9),  # 缩小范围
             
             # UCGM Training parameters
             'ema_decay_rate': ema_decay_rate,
             'scaled_cbl_eps': scaled_cbl_eps,
             'transport_type': transport_type,
-            'lab_drop_ratio': trial.suggest_float('lab_drop_ratio', 0.0, 0.3),
-            'enhanced_ratio': trial.suggest_float('enhanced_ratio', 0.0, 2.0),
+            # 基于优秀参数缩小其他参数范围
+            # 优秀参数: lab_drop_ratio=0.0574, enhanced_ratio=0.9687
+            'lab_drop_ratio': trial.suggest_float('lab_drop_ratio', 0.0, 0.15),  # 缩小范围
+            'enhanced_ratio': trial.suggest_float('enhanced_ratio', 0.5, 1.5),  # 缩小范围
             'wt_cosine_loss': wt_cosine_loss,
             'weight_function': weight_function,
             'time_dist_ctrl_0': time_dist_ctrl[0],
@@ -118,10 +123,12 @@ class AdaptiveUCGMBayesianOptimizer:
         scaled_cbl_eps = trial.suggest_float('scaled_cbl_eps', 0.0, 10.0)  # 全范围
         rfba_gap_end = trial.suggest_float('rfba_gap_end', 0.001, 0.8)  # 全范围
         extrapol_ratio = trial.suggest_float('extrapol_ratio', 0.0, 0.6)  # 全范围
+        # 基于优秀参数缩小时间分布控制范围
+        # 优秀参数: time_dist_ctrl=[2.2044, 0.9469, 0.7631]
         time_dist_ctrl = [
-            trial.suggest_float('time_dist_ctrl_0', 0.5, 2.5),
-            trial.suggest_float('time_dist_ctrl_1', 0.5, 2.5),
-            trial.suggest_float('time_dist_ctrl_2', 0.5, 2.5)
+            trial.suggest_float('time_dist_ctrl_0', 1.5, 2.5),  # 缩小范围
+            trial.suggest_float('time_dist_ctrl_1', 0.5, 1.5),  # 缩小范围
+            trial.suggest_float('time_dist_ctrl_2', 0.5, 1.5)   # 缩小范围
         ]
 
         params = {
@@ -141,8 +148,10 @@ class AdaptiveUCGMBayesianOptimizer:
             'ema_decay_rate': ema_decay_rate,
             'scaled_cbl_eps': scaled_cbl_eps,
             'transport_type': transport_type,
-            'lab_drop_ratio': trial.suggest_float('lab_drop_ratio', 0.0, 0.3),
-            'enhanced_ratio': trial.suggest_float('enhanced_ratio', 0.0, 2.0),
+            # 基于优秀参数缩小其他参数范围
+            # 优秀参数: lab_drop_ratio=0.0574, enhanced_ratio=0.9687
+            'lab_drop_ratio': trial.suggest_float('lab_drop_ratio', 0.0, 0.15),  # 缩小范围
+            'enhanced_ratio': trial.suggest_float('enhanced_ratio', 0.5, 1.5),  # 缩小范围
             'wt_cosine_loss': wt_cosine_loss,
             'weight_function': weight_function,
             'time_dist_ctrl_0': time_dist_ctrl[0],
@@ -166,43 +175,48 @@ class AdaptiveUCGMBayesianOptimizer:
         wt_cosine_loss = False  # 固定不使用cosine loss
         weight_function = None  # 固定不使用weight function
         
-        # 统一的参数范围，不根据步数强制划分
-        # 让优化器自由探索，只在步数上做限制
-        consistc_ratio = trial.suggest_float('consistc_ratio', 0.0, 1.0)  # 全范围
-        ema_decay_rate = trial.suggest_float('ema_decay_rate', 0.0, 0.999)  # 全范围
-        scaled_cbl_eps = trial.suggest_float('scaled_cbl_eps', 0.0, 10.0)  # 全范围
-        rfba_gap_end = trial.suggest_float('rfba_gap_end', 0.001, 0.8)  # 全范围
-        extrapol_ratio = trial.suggest_float('extrapol_ratio', 0.0, 0.6)  # 全范围
+        # 基于优秀参数缩小范围，提高优化效率
+        # 优秀参数: consistc_ratio=0.6035, ema_decay_rate=0.8696, scaled_cbl_eps=9.5614
+        consistc_ratio = trial.suggest_float('consistc_ratio', 0.3, 0.8)  # 缩小范围
+        ema_decay_rate = trial.suggest_float('ema_decay_rate', 0.7, 0.95)  # 缩小范围
+        scaled_cbl_eps = trial.suggest_float('scaled_cbl_eps', 5.0, 12.0)  # 缩小范围
+        rfba_gap_end = trial.suggest_float('rfba_gap_end', 0.1, 0.5)  # 缩小范围
+        extrapol_ratio = trial.suggest_float('extrapol_ratio', 0.1, 0.4)  # 缩小范围
+        # 基于优秀参数缩小时间分布控制范围
+        # 优秀参数: time_dist_ctrl=[2.2044, 0.9469, 0.7631]
         time_dist_ctrl = [
-            trial.suggest_float('time_dist_ctrl_0', 0.5, 2.5),
-            trial.suggest_float('time_dist_ctrl_1', 0.5, 2.5),
-            trial.suggest_float('time_dist_ctrl_2', 0.5, 2.5)
+            trial.suggest_float('time_dist_ctrl_0', 1.5, 2.5),  # 缩小范围
+            trial.suggest_float('time_dist_ctrl_1', 0.5, 1.5),  # 缩小范围
+            trial.suggest_float('time_dist_ctrl_2', 0.5, 1.5)   # 缩小范围
         ]
 
         params = {
             # UCGM Sampling parameters
             'consistc_ratio': consistc_ratio,
             'rfba_gap_end': rfba_gap_end,
-            'temperature': trial.suggest_float('temperature', 0.7, 1.2),
+            'temperature': trial.suggest_float('temperature', 0.8, 1.1),  # 基于优秀参数0.9209缩小范围
             'num_sampling_steps': num_sampling_steps,
-            'cfg': trial.suggest_float('cfg', 0.8, 1.5),
+            'cfg': trial.suggest_float('cfg', 0.9, 1.2),  # 基于优秀参数1.0343缩小范围
             'extrapol_ratio': extrapol_ratio,
             
-            # Local attention parameters
-            'window_size': trial.suggest_int('window_size', 0, 15),
-            'lambda_local': trial.suggest_float('lambda_local', 0.01, 0.8),
+            # 基于优秀参数缩小局部注意力参数范围
+            # 优秀参数: window_size=10, lambda_local=0.7250
+            'window_size': trial.suggest_int('window_size', 8, 12),  # 缩小范围
+            'lambda_local': trial.suggest_float('lambda_local', 0.5, 0.9),  # 缩小范围
             
             # UCGM Training parameters
             'ema_decay_rate': ema_decay_rate,
             'scaled_cbl_eps': scaled_cbl_eps,
-            'transport_type': trial.suggest_categorical('transport_type', ['Linear', 'TrigFlow', 'Cosine', 'DDPM']),
-            'lab_drop_ratio': trial.suggest_float('lab_drop_ratio', 0.0, 0.3),
-            'enhanced_ratio': trial.suggest_float('enhanced_ratio', 0.0, 2.0),
-            'wt_cosine_loss': trial.suggest_categorical('wt_cosine_loss', [True, False]),
-            'weight_function': trial.suggest_categorical('weight_function', [None, 'Cosine']),
-            'time_dist_ctrl_0': trial.suggest_float('time_dist_ctrl_0', 0.5, 2.5),
-            'time_dist_ctrl_1': trial.suggest_float('time_dist_ctrl_1', 0.5, 2.5),
-            'time_dist_ctrl_2': trial.suggest_float('time_dist_ctrl_2', 0.5, 2.5),
+            'transport_type': transport_type,  # 使用上面定义的固定值
+            # 基于优秀参数缩小其他参数范围
+            # 优秀参数: lab_drop_ratio=0.0574, enhanced_ratio=0.9687
+            'lab_drop_ratio': trial.suggest_float('lab_drop_ratio', 0.0, 0.15),  # 缩小范围
+            'enhanced_ratio': trial.suggest_float('enhanced_ratio', 0.5, 1.5),  # 缩小范围
+            'wt_cosine_loss': wt_cosine_loss,  # 使用上面定义的固定值
+            'weight_function': weight_function,  # 使用上面定义的固定值
+            'time_dist_ctrl_0': time_dist_ctrl[0],  # 使用上面定义的time_dist_ctrl
+            'time_dist_ctrl_1': time_dist_ctrl[1],  # 使用上面定义的time_dist_ctrl
+            'time_dist_ctrl_2': time_dist_ctrl[2],  # 使用上面定义的time_dist_ctrl
         }
         
         return self._build_ucgmts_config(params)
