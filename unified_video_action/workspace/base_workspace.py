@@ -104,9 +104,11 @@ class BaseWorkspace:
                         # value_new = value_new["base_optimizer_state"]
                         continue  # HACK: optimizer state is not compatible with multi-node training. Should use accelerate.load_state
                     # 根据不同的加载场景处理参数
+                    print(f"[调试] diffhead_finetuning={diffhead_finetuning}, strict={kwargs.get('strict', True)}")
                     if diffhead_finetuning:
                         # 场景1: 加载预训练模型 (pusht.ckpt) - 需要drop整个diffactloss网络
                         # 因为预训练模型没有UCGM，MLP输出维度不匹配
+                        print(f"[预训练模型] 开始drop整个diffactloss网络")
                         drop_prefixes = ("model.diffloss", "model.diffactloss")
                         buff = {}
                         for k, v in value_new.items():
@@ -117,21 +119,25 @@ class BaseWorkspace:
                         value_new = buff
                     else:
                         # 场景2: 恢复自己的训练checkpoint - 尝试完整加载，如果失败则跳过UCGM相关参数
+                        print(f"[恢复训练] 尝试完整加载checkpoint")
                         if not kwargs.get('strict', True):
                             # 检查是否包含UCGM参数，如果有则不匹配，需要跳过
                             has_ucgm_params = any(k.startswith("model.diffactloss.ucgmts") or 
                                                  k.startswith("model.diffactloss.net.final_layer") 
                                                  for k in value_new.keys())
                             if has_ucgm_params:
-    
+                                print(f"[恢复训练] 检测到UCGM参数不匹配，跳过UCGM相关参数")
+                                print(f"[恢复训练] 这通常是因为UCGM配置发生了变化")
                                 drop_prefixes = ("model.diffactloss.ucgmts", "model.diffactloss.net.final_layer")
                                 buff = {}
                                 for k, v in value_new.items():
                                     if k.startswith(drop_prefixes):
-                                        print(f"[Resume Training] Dropped {k}")
+                                        print(f"[恢复训练] Dropped {k}")
                                     else:
                                         buff[k] = v
                                 value_new = buff
+                            else:
+                                print(f"[恢复训练] 没有检测到UCGM参数，尝试完整加载")
                     print(f"Loading {key}")
                     load_result = self.__dict__[key].load_state_dict(value_new, **kwargs)
                 except Exception as e:

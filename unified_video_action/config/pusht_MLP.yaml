@@ -71,7 +71,7 @@ multi_run:
   run_dir: data/outputs/train_uva_pusht
   wandb_name_base: train_uva_pusht
 
-payload: checkpoints/pusht_final_2/checkpoints/latest.ckpt  # 加载预训练权重
+payload: checkpoints/pusht.ckpt 
 freeze_submodules: true
 strict_checkpoint_loading: false
 
@@ -81,7 +81,7 @@ save_folder: ./logs/time_logs/pusht_ucgm_few_steps_sample_4
 bayesian_optimization:
   enabled: true
   optimization_mode: "balanced"  # 可选: "performance", "speed", "balanced"
-  start_epoch: 140  # 从3/4位置开始
+  start_epoch: 1  # 从3/4位置开始
   interval: 20      # 每10个epoch优化一次，更频繁的优化
   max_trials: 8      # 中期优化用8个trials
   final_trials: 15   # 最终优化用15个trials
