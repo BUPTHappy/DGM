@@ -21,12 +21,14 @@ class DiffActLossMLPUCGM(nn.Module):
         act_diff_training_steps=1000,
         act_diff_testing_steps="100",
         act_model_type="conv_fc",
+        learn_sigma=False,
         ucgmts_config={},
         **kwargs
     ):
         super(DiffActLossMLPUCGM, self).__init__()
         self.in_channels = target_channels
         self.n_frames = n_frames
+        self.learn_sigma = learn_sigma
 
         self.language_emb_model = kwargs["language_emb_model"]
         self.language_emb_model_type = kwargs["language_emb_model_type"]
@@ -89,11 +91,12 @@ class DiffActLossMLPUCGM(nn.Module):
         else:
             raise NotImplementedError
 
-        # Use only MLP architecture
+        # Use only MLP architecture with learn_sigma support
+        out_channels = target_channels * (2 if learn_sigma else 1)
         self.net = SimpleMLPAdaLN(
             in_channels=target_channels,
             model_channels=width,
-            out_channels=target_channels,  # 修复：输出维度应该等于动作维度
+            out_channels=out_channels,  # 支持 learn_sigma，输出维度 = target_channels * (2 if learn_sigma else 1)
             z_channels=z_channels,
             num_res_blocks=depth,
             grad_checkpointing=grad_checkpointing,
@@ -232,6 +235,12 @@ class DiffActLossMLPUCGM(nn.Module):
         sampled_token = rearrange(
             sampled_token, "(b t) c -> b t c", b=bsz
         )
-        # 取前2维作为最终动作输出，与原始MLP版本一致
-        return sampled_token[:, :, :2]
+        
+        # 根据 learn_sigma 决定是否截取前2维
+        if self.learn_sigma:
+            # 如果学习了 sigma，输出维度是 4，需要截取前2维作为动作
+            return sampled_token[:, :, :self.in_channels]
+        else:
+            # 如果没有学习 sigma，输出维度已经是 2，直接返回
+            return sampled_token
 

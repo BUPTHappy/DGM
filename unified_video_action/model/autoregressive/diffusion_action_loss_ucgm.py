@@ -8,7 +8,7 @@ from unified_video_action.model.autoregressive.diffusion_loss import SimpleMLPAd
 
 
 class DiffActLossUCGM(nn.Module):
-    """Diffusion Loss"""
+    """Diffusion Loss with UCGM using MLP architecture only"""
 
     def __init__(
         self,
@@ -23,12 +23,14 @@ class DiffActLossUCGM(nn.Module):
         act_diff_testing_steps="100",
         act_model_type="conv_fc",
         diff_model_type="MLP",
+        learn_sigma=True,  # 默认支持 learn_sigma 来匹配检查点
         ucgmts_config={},
         **kwargs
     ):
         super(DiffActLossUCGM, self).__init__()
         self.in_channels = target_channels
         self.n_frames = n_frames
+        self.learn_sigma = learn_sigma
 
         self.language_emb_model = kwargs["language_emb_model"]
         self.language_emb_model_type = kwargs["language_emb_model_type"]
@@ -92,62 +94,20 @@ class DiffActLossUCGM(nn.Module):
         else:
             raise NotImplementedError
         
+        # Only support MLP architecture for simplicity
         if diff_model_type == "MLP":
+            # 支持 learn_sigma，输出维度 = target_channels * (2 if learn_sigma else 1)
+            out_channels = target_channels * (2 if learn_sigma else 1)
             self.net = SimpleMLPAdaLN(
                 in_channels=target_channels,
                 model_channels=width,
-                out_channels=target_channels,
+                out_channels=out_channels,
                 z_channels=z_channels,
                 num_res_blocks=depth,
                 grad_checkpointing=grad_checkpointing,
             )
-        elif diff_model_type == "DiT":
-            from unified_video_action.model.autoregressive.dit import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
-        elif diff_model_type == "DiT_hybrid_ca_sa":
-            from unified_video_action.model.autoregressive.dit_hybrid_ca_sa import DiT
-            #from unified_video_action.model.autoregressive.dit_patches import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
-        elif diff_model_type == "DiT_patches_hybrid":
-            from unified_video_action.model.autoregressive.dit_hybrid import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
-        elif diff_model_type == "DiT_patches_hybrid_cross_only":
-            from unified_video_action.model.autoregressive.dit_hybrid_cross_only import DiT
-            self.net = DiT(
-                in_channels=target_channels,
-                hidden_size=width,
-                depth=depth,
-                z_channels=z_channels,
-                num_heads=16,
-                mlp_ratio=4.0,
-                learn_sigma=False,
-            )
         else:
-            raise NotImplementedError(f"Unknown diffusion model type: {diff_model_type}")
+            raise NotImplementedError(f"Only MLP architecture is supported, got: {diff_model_type}")
         
         self.diff_model_type = diff_model_type
         self.num_sampling_steps = num_sampling_steps
@@ -259,11 +219,9 @@ class DiffActLossUCGM(nn.Module):
         
         bsz, seq_len, _ = z.shape
 
-        if self.diff_model_type == "MLP":
-            z = rearrange(z, "b t c -> (b t) c")
-            noise = torch.randn(z.shape[0], self.in_channels, device=z.device)
-        else:
-            noise = torch.randn(z.shape[0], 16, self.in_channels, device=z.device)
+        # MLP architecture processing
+        z = rearrange(z, "b t c -> (b t) c")
+        noise = torch.randn(z.shape[0], self.in_channels, device=z.device)
 
 
         model_kwargs = dict(c=z)
@@ -279,9 +237,17 @@ class DiffActLossUCGM(nn.Module):
                 rfba_gap_steps=self.rfba_gap_steps,
                 **model_kwargs,)[-1]
 
+        # Reshape back to batch format (with safety check)
         if sampled_token.dim() == 2:
             sampled_token = rearrange(
                 sampled_token, "(b t) c -> b t c", b=bsz
             )
-        return sampled_token
+        
+        # 根据 learn_sigma 决定是否截取前2维
+        if self.learn_sigma:
+            # 如果学习了 sigma，输出维度是 4，需要截取前2维作为动作
+            return sampled_token[:, :, :self.in_channels]
+        else:
+            # 如果没有学习 sigma，输出维度已经是 2，直接返回
+            return sampled_token
 
