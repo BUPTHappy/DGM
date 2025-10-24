@@ -113,17 +113,6 @@ class BaseWorkspace:
                             else:
                                 buff[k] = v
                         value_new = buff
-
-                    
-                    drop_prefixes = ("model.diffactloss.ucgmts")
-                    # drop_prefixes = ("model.diffactloss")
-                    buff = {}
-                    for k, v in value_new.items():
-                        if k.startswith(drop_prefixes):
-                            print(f"Dropped {k}")
-                        else:
-                            buff[k] = v
-                    value_new = buff
                     print(f"Loading {key}")
                     print(f"kwargs: {kwargs}")  # 调试信息
                     
