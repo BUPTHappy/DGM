@@ -75,6 +75,7 @@ multi_run:
 
 payload: /home/zhuliu/workspace/Towards-Generalizable-Embodied-AI-via-Diffusion-Based-Robotic-Policies/checkpoints/pusht.ckpt
 freeze_submodules: true
+strict_loading: false  # 允许忽略不匹配的层
 
 save_folder: ./logs/time_logs/pusht_mlp_ucgm_few_steps_sample_4
 
