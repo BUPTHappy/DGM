@@ -437,11 +437,35 @@ class TrainingBayesianOptimizer:
             elif hasattr(model, 'model') and hasattr(model.model, 'autoregressive_model_params'):
                 # Handle case where model is wrapped (e.g., DDP wrapper)
                 autoregressive_params = model.model.autoregressive_model_params
+            elif hasattr(model, 'module') and hasattr(model.module, 'autoregressive_model_params'):
+                # Handle case where model is wrapped by accelerator (e.g., AcceleratedModel)
+                autoregressive_params = model.module.autoregressive_model_params
             else:
                 print(f"Model type: {type(model)}")
                 print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
-                print("Model does not have autoregressive_model_params attribute")
-                return False
+                
+                # Try to find autoregressive_model_params in nested structure
+                if hasattr(model, 'module'):
+                    print(f"Model.module type: {type(model.module)}")
+                    print(f"Model.module attributes: {[attr for attr in dir(model.module) if not attr.startswith('_')]}")
+                    if hasattr(model.module, 'autoregressive_model_params'):
+                        print("Found autoregressive_model_params in model.module")
+                        autoregressive_params = model.module.autoregressive_model_params
+                    else:
+                        print("Model does not have autoregressive_model_params attribute")
+                        return False
+                elif hasattr(model, 'model'):
+                    print(f"Model.model type: {type(model.model)}")
+                    print(f"Model.model attributes: {[attr for attr in dir(model.model) if not attr.startswith('_')]}")
+                    if hasattr(model.model, 'autoregressive_model_params'):
+                        print("Found autoregressive_model_params in model.model")
+                        autoregressive_params = model.model.autoregressive_model_params
+                    else:
+                        print("Model does not have autoregressive_model_params attribute")
+                        return False
+                else:
+                    print("Model does not have autoregressive_model_params attribute")
+                    return False
             
             # Update UCGM parameters
             autoregressive_params.use_ucgm = True
@@ -463,8 +487,20 @@ class TrainingBayesianOptimizer:
             autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
             
             # Also update the actual model components
-            if hasattr(model, 'model') and hasattr(model.model, 'diffactloss'):
-                diffactloss = model.model.diffactloss
+            # Handle different model wrapping scenarios
+            actual_model = None
+            if hasattr(model, 'module'):
+                # Accelerator wrapped model
+                actual_model = model.module
+            elif hasattr(model, 'model'):
+                # DDP wrapped model
+                actual_model = model.model
+            else:
+                # Direct model
+                actual_model = model
+            
+            if hasattr(actual_model, 'diffactloss'):
+                diffactloss = actual_model.diffactloss
                 diffactloss.num_sampling_steps = params['num_sampling_steps']
                 
                 if hasattr(diffactloss, 'ucgmts'):
