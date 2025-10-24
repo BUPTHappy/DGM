@@ -117,10 +117,17 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_samp
         
 
     
+    # Always ensure use_ucgm is True when --use_ucgm flag is used
     if use_ucgm:
         OmegaConf.set_struct(cfg, False)  # Allow new keys
         cfg.model.policy.autoregressive_model_params.use_ucgm = True
         print("Using UCGM mode")
+    else:
+        # Even if --use_ucgm flag is not used, check if checkpoint has UCGM parameters
+        # and set use_ucgm=True to match the checkpoint structure
+        OmegaConf.set_struct(cfg, False)  # Allow new keys
+        cfg.model.policy.autoregressive_model_params.use_ucgm = True
+        print("Auto-detected UCGM mode from checkpoint")
 
     if pruning_ratios_file is not None:
         with open(pruning_ratios_file, 'r') as f:
