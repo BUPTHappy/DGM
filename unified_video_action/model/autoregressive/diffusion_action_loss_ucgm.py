@@ -23,7 +23,7 @@ class DiffActLossUCGM(nn.Module):
         act_diff_testing_steps="100",
         act_model_type="conv_fc",
         diff_model_type="MLP",
-        learn_sigma=True,  # 默认支持 learn_sigma 来匹配检查点
+        learn_sigma=False,  # 默认不学 sigma，避免维度不匹配
         ucgmts_config={},
         **kwargs
     ):
@@ -175,8 +175,18 @@ class DiffActLossUCGM(nn.Module):
         if self.diff_model_type == "MLP":
             z = z.reshape(bsz * seq_len, -1)
             target = target.reshape(bsz * seq_len, -1)
-
-        loss = self.ucgmts.training_step(model=self.net, x=target, c=z)
+            
+            # 如果 learn_sigma=True，需要扩展 target 维度以匹配模型输出
+            if self.learn_sigma:
+                # 扩展 target 从 (b*t, 2) 到 (b*t, 4)
+                # 对于 sigma 部分，我们可以用零填充或者复制动作值
+                target_extended = torch.cat([target, target], dim=-1)  # 复制动作值作为 sigma
+                loss = self.ucgmts.training_step(model=self.net, x=target_extended, c=z)
+            else:
+                loss = self.ucgmts.training_step(model=self.net, x=target, c=z)
+        else:
+            loss = self.ucgmts.training_step(model=self.net, x=target, c=z)
+            
         loss = torch.mean(loss)
         return loss
     
