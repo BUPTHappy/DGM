@@ -552,7 +552,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         print(f"Policy type: {type(policy)}")
                         print(f"Policy attributes: {[attr for attr in dir(policy) if not attr.startswith('_')]}")
                         
-                        success = self.bayesian_optimizer.apply_best_params_to_model(policy, best_params)
+                        success = self.bayesian_optimizer.apply_best_params_to_model(policy, best_params, workspace=self)
                         
                         if success:
                             print(f"Successfully applied optimized parameters to model")

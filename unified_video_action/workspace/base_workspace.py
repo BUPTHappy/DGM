@@ -84,6 +84,10 @@ class BaseWorkspace:
             exclude_keys = tuple()
         if include_keys is None:
             include_keys = payload["pickles"].keys()
+        
+        # Load cfg if it exists in payload
+        if "cfg" in payload:
+            self.cfg = payload["cfg"]
 
         if (
             "lr_scheduler" not in self.__dict__
