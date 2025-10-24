@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from einops import rearrange
 
-from unified_video_action.model.autoregressive.diffusion import create_diffusion
+from unified_video_action.model.ucgm.ucgm import UCGMTS
 from unified_video_action.model.autoregressive.diffusion_loss import SimpleMLPAdaLN
 
 
@@ -21,11 +21,15 @@ class DiffActLoss(nn.Module):
         act_diff_training_steps=1000,
         act_diff_testing_steps="100",
         act_model_type="conv_fc",
+        diff_model_type="MLP",
+        learn_sigma=False,  # 默认不学 sigma，避免维度不匹配
+        ucgmts_config={},
         **kwargs
     ):
         super(DiffActLoss, self).__init__()
         self.in_channels = target_channels
         self.n_frames = n_frames
+        self.learn_sigma = learn_sigma
 
         self.language_emb_model = kwargs["language_emb_model"]
         self.language_emb_model_type = kwargs["language_emb_model_type"]
@@ -84,27 +88,45 @@ class DiffActLoss(nn.Module):
                 nn.ReLU(),  # Add an activation function (optional, but common practice)
                 nn.Linear(256, 16)
             )
-            
+        elif self.act_model_type == 'none':
+            pass
         else:
             raise NotImplementedError
 
-        self.net = SimpleMLPAdaLN(
-            in_channels=target_channels,
-            model_channels=width,
-            out_channels=target_channels * 2,  # for vlb loss
-            z_channels=z_channels,
-            num_res_blocks=depth,
-            grad_checkpointing=grad_checkpointing,
-        )
+        # Only support MLP architecture for simplicity
+        if diff_model_type == "MLP":
+            # 支持 learn_sigma，输出维度 = target_channels * (2 if learn_sigma else 1)
+            out_channels = target_channels * (2 if learn_sigma else 1)
+            self.net = SimpleMLPAdaLN(
+                in_channels=target_channels,
+                model_channels=width,
+                out_channels=out_channels,
+                z_channels=z_channels,
+                num_res_blocks=depth,
+                grad_checkpointing=grad_checkpointing,
+            )
+        else:
+            raise NotImplementedError(f"Only MLP architecture is supported, got: {diff_model_type}")
+        
+        self.diff_model_type = diff_model_type
+        self.num_sampling_steps = num_sampling_steps
 
-        self.train_diffusion = create_diffusion(
-            timestep_respacing="",
-            noise_schedule="cosine",
-            diffusion_steps=act_diff_training_steps,
+        print(f"DiffActLoss: num_sampling_steps: {num_sampling_steps}")
+        print("UCGMTS config values:")
+        print("  transport_type:", ucgmts_config.get("transport_type", "Linear"))
+        print("  scaled_cbl_eps:", ucgmts_config.get("scaled_cbl_eps", 0.0))
+        print("  ema_decay_rate:", ucgmts_config.get("ema_decay_rate", 0.0))
+        print("  consistc_ratio:", ucgmts_config.get("consistc_ratio", 1.0))
+        print("  rfba_gap_steps:", ucgmts_config.get("rfba_gap_steps", [0.001, 0.5]))
+
+        self.ucgmts = UCGMTS(
+            transport_type=ucgmts_config.get("transport_type", "Linear"),
+            scaled_cbl_eps=ucgmts_config.get("scaled_cbl_eps", 0.0),
+            ema_decay_rate=ucgmts_config.get("ema_decay_rate", 0.0),
+            consistc_ratio=ucgmts_config.get("consistc_ratio", 1.0),
         )
-        self.gen_diffusion = create_diffusion(
-            timestep_respacing=act_diff_testing_steps, noise_schedule="cosine"
-        )
+        self.stochasticity_ratio = ucgmts_config.get("consistc_ratio", 1.0)
+        self.rfba_gap_steps = ucgmts_config.get("rfba_gap_steps", [0.001, 0.5])
 
     def forward(self, target, z, task_mode=None, text_latents=None):
         bsz, seq_len, _ = target.shape
@@ -140,30 +162,28 @@ class DiffActLoss(nn.Module):
         elif self.act_model_type == 'fc2':
             z = self.fc(z.transpose(1, 2))
             z = z.transpose(1, 2)
-            
+        elif self.act_model_type == 'none':
+            pass
         else:
             raise NotImplementedError
 
-        target = target.reshape(bsz * seq_len, -1)
-        z = z.reshape(bsz * seq_len, -1)
-
-        t = torch.randint(
-            0,
-            self.train_diffusion.num_timesteps,
-            (target.shape[0],),
-            device=target.device,
-        )
-
-        model_kwargs = dict(c=z)
-        loss_dict = self.train_diffusion.training_losses(
-            self.net, target, t, model_kwargs
-        )
-
-        action_loss = loss_dict["loss"].reshape(bsz, seq_len)
-
-        total_loss = torch.mean(action_loss)
-
-        return total_loss
+        if self.diff_model_type == "MLP":
+            z = z.reshape(bsz * seq_len, -1)
+            target = target.reshape(bsz * seq_len, -1)
+            
+            # 如果 learn_sigma=True，需要扩展 target 维度以匹配模型输出
+            if self.learn_sigma:
+                # 扩展 target 从 (b*t, 2) 到 (b*t, 4)
+                # 对于 sigma 部分，我们可以用零填充或者复制动作值
+                target_extended = torch.cat([target, target], dim=-1)  # 复制动作值作为 sigma
+                loss = self.ucgmts.training_step(model=self.net, x=target_extended, c=z)
+            else:
+                loss = self.ucgmts.training_step(model=self.net, x=target, c=z)
+        else:
+            loss = self.ucgmts.training_step(model=self.net, x=target, c=z)
+            
+        loss = torch.mean(loss)
+        return loss
 
     def sample(self, z, temperature=1.0, cfg=1.0, text_latents=None):
         if self.act_model_type == "conv_fc":
@@ -197,36 +217,40 @@ class DiffActLoss(nn.Module):
         elif self.act_model_type == 'fc2':
             z = self.fc(z.transpose(1, 2))
             z = z.transpose(1, 2)
-            
+        elif self.act_model_type == 'none':
+            pass
         else:
             raise NotImplementedError
-
+        
         bsz, seq_len, _ = z.shape
+
+        # MLP architecture processing
         z = rearrange(z, "b t c -> (b t) c")
+        noise = torch.randn(z.shape[0], self.in_channels, device=z.device)
 
+        model_kwargs = dict(c=z)
 
-        # diffusion loss sampling
-        if not cfg == 1.0:
-            noise = torch.randn(z.shape[0] // 2, self.in_channels).cuda()
-            noise = torch.cat([noise, noise], dim=0)
-            model_kwargs = dict(c=z, cfg_scale=cfg)
-            sample_fn = self.net.forward_with_cfg
+        sampled_token = self.ucgmts.uni_sample(
+                inital_noise_z=noise,
+                sampling_model=self.net,
+                sampling_steps=self.num_sampling_steps,
+                stochast_ratio=self.stochasticity_ratio,
+                extrapol_ratio=0,
+                sampling_order=1,
+                time_dist_ctrl=[1.17, 0.8, 1.1],
+                rfba_gap_steps=self.rfba_gap_steps,
+                **model_kwargs,)[-1]
+
+        # Reshape back to batch format (with safety check)
+        if sampled_token.dim() == 2:
+            sampled_token = rearrange(
+                sampled_token, "(b t) c -> b t c", b=bsz
+            )
+        
+        # 根据 learn_sigma 决定是否截取前2维
+        if self.learn_sigma:
+            # 如果学习了 sigma，输出维度是 4，需要截取前2维作为动作
+            return sampled_token[:, :, :self.in_channels]
         else:
-            noise = torch.randn(z.shape[0], self.in_channels).cuda()
-            model_kwargs = dict(c=z)
-            sample_fn = self.net.forward
-
-        sampled_token_latent = self.gen_diffusion.p_sample_loop(
-            sample_fn,
-            noise.shape,
-            noise,
-            clip_denoised=True,
-            model_kwargs=model_kwargs,
-            progress=False,
-            temperature=temperature,
-        )
-
-        sampled_token_latent = rearrange(
-            sampled_token_latent, "(b t) c -> b t c", b=bsz
-        )
-        return sampled_token_latent
+            # 如果没有学习 sigma，输出维度已经是 2，直接返回
+            return sampled_token

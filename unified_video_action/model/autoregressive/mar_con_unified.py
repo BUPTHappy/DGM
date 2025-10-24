@@ -421,11 +421,12 @@ class MAR(nn.Module):
         self.predict_video = predict_video
 
         diffloss_options = {False: DiffLoss, True: DiffLossUCGM}
-        diffactloss_options = {False: DiffActLoss, True: DiffActLossUCGM}
+        # DiffActLoss now always uses UCGM, so we don't need to choose based on use_ucgm
+        diffactloss_class = DiffActLoss
 
         print("Using UCGM:", use_ucgm)
         print("Using diffloss: ", diffloss_options[use_ucgm])
-        print("Using diffactloss: ", diffactloss_options[use_ucgm])
+        print("Using diffactloss: ", diffactloss_class)
 
         if self.predict_video:
             # ========= Video Diffusion Loss =========
@@ -457,7 +458,7 @@ class MAR(nn.Module):
 
         # ========= Action Diffusion Loss =========
         if self.predict_action:
-            self.diffactloss = diffactloss_options[use_ucgm](
+            self.diffactloss = diffactloss_class(
                 target_channels=act_dim,
                 z_channels=decoder_embed_dim,
                 width=diffloss_act_w,
@@ -469,6 +470,7 @@ class MAR(nn.Module):
                 act_diff_training_steps=act_diff_training_steps,
                 act_diff_testing_steps=act_diff_testing_steps,
                 diff_model_type=action_model_params["diff_model_type"] if "diff_model_type" in action_model_params else "MLP",
+                learn_sigma=action_model_params.get("learn_sigma", False),
                 language_emb_model=self.language_emb_model,
                 language_emb_model_type=self.language_emb_model_type,
                 ucgmts_config=ucgmts_config
@@ -478,7 +480,7 @@ class MAR(nn.Module):
         # ========= Proprioception Diffusion Loss =========
         if self.predict_proprioception:
             if self.task_name == "umi":
-                self.diffproploss = diffactloss_options[use_ucgm](
+                self.diffproploss = diffactloss_class(
                     target_channels=6,
                     z_channels=decoder_embed_dim,
                     width=diffloss_act_w,
@@ -489,11 +491,14 @@ class MAR(nn.Module):
                     act_model_type=action_model_params["act_model_type"],
                     act_diff_training_steps=act_diff_training_steps,
                     act_diff_testing_steps=act_diff_testing_steps,
+                    diff_model_type=action_model_params["diff_model_type"] if "diff_model_type" in action_model_params else "MLP",
+                    learn_sigma=action_model_params.get("learn_sigma", False),
                     language_emb_model=self.language_emb_model,
                     language_emb_model_type=self.language_emb_model_type,
+                    ucgmts_config=ucgmts_config
                 )
             elif self.task_name == "toolhang":
-                self.diffproploss = diffactloss_options[use_ucgm](
+                self.diffproploss = diffactloss_class(
                     target_channels=9,
                     z_channels=decoder_embed_dim,
                     width=diffloss_act_w,
@@ -504,8 +509,11 @@ class MAR(nn.Module):
                     act_model_type=action_model_params["act_model_type"],
                     act_diff_training_steps=act_diff_training_steps,
                     act_diff_testing_steps=act_diff_testing_steps,
+                    diff_model_type=action_model_params["diff_model_type"] if "diff_model_type" in action_model_params else "MLP",
+                    learn_sigma=action_model_params.get("learn_sigma", False),
                     language_emb_model=self.language_emb_model,
                     language_emb_model_type=self.language_emb_model_type,
+                    ucgmts_config=ucgmts_config
                 )
             else:
                 raise NotImplementedError
