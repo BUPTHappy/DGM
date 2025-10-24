@@ -127,7 +127,8 @@ class BaseWorkspace:
                             elif k in model_state and model_state[k].shape == v.shape:
                                 filtered_value_new[k] = v
                             else:
-                                print(f"Skipping mismatched key: {k}, checkpoint shape: {v.shape}, model shape: {model_state.get(k, 'missing')}")
+                                # print(f"Skipping mismatched key: {k}, checkpoint shape: {v.shape}, model shape: {model_state.get(k, 'missing')}")
+                                pass
                         value_new = filtered_value_new
                     
                     load_result = self.__dict__[key].load_state_dict(value_new, **kwargs)
@@ -170,7 +171,8 @@ class BaseWorkspace:
                     elif k in model_state and model_state[k].shape == v.shape:
                         filtered_value_new[k] = v
                     else:
-                        print(f"Skipping mismatched key: {k}, checkpoint shape: {v.shape}, model shape: {model_state.get(k, 'missing')}")
+                        # print(f"Skipping mismatched key: {k}, checkpoint shape: {v.shape}, model shape: {model_state.get(k, 'missing')}")
+                        pass
                 value_new = filtered_value_new
             
             load_result = self.__dict__["model"].load_state_dict(value_new, **kwargs)
