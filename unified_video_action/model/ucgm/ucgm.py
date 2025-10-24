@@ -175,6 +175,10 @@ class UCGMTS(torch.nn.Module):
         self.step = 0
         self.mod = None
         self.lsw = None
+        
+        # Initialize mod attribute to match checkpoint structure
+        # This ensures compatibility when loading checkpoints
+        self._mod_initialized = False
 
         transport = TRANSPORTS[transport_type]()
         self.alpha_in, self.gamma_in = transport.alpha_in, transport.gamma_in
@@ -189,6 +193,17 @@ class UCGMTS(torch.nn.Module):
             self.alpha_to, self.gamma_to = self.gamma_to, self.alpha_to
         else:
             self.integ_st = 1  # Start point if integral from 1 to 0
+
+    def _ensure_mod_initialized(self, model):
+        """
+        Ensure mod attribute is initialized to match checkpoint structure.
+        This is called during checkpoint loading to ensure compatibility.
+        """
+        if self.mod is None and not self._mod_initialized:
+            # Create a copy of the model to match checkpoint structure
+            from copy import deepcopy
+            self.mod = deepcopy(model).requires_grad_(False).train()
+            self._mod_initialized = True
 
     def sample_beta(self, alpha, beta, size):
         beta_dist = torch.distributions.Beta(alpha, beta)
@@ -242,6 +257,9 @@ class UCGMTS(torch.nn.Module):
 
         with torch.no_grad():
             if self.cor != 0.0 or self.enr != 0.0:
+                # Ensure mod is initialized for checkpoint compatibility
+                self._ensure_mod_initialized(model)
+                
                 if self.emd > 0.0 and self.emd < 1.0:
                     self.mod = self.mod or deepcopy(model).requires_grad_(False).train()
                     update_ema(self.mod, model, decay=self.cmd)
