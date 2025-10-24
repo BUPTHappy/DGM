@@ -169,19 +169,6 @@ class BaseWorkspace:
                 value_new = buff
                 if dropped_set:
                     print(f"Dropped {dropped_set} from ema model")
-
-            drop_prefixes = ("model.diffactloss.ucgmts")
-            # drop_prefixes = ("model.diffactloss")
-            buff = {}
-            dropped_set = set()
-            for k, v in value_new.items():
-                if k.startswith(drop_prefixes):
-                    dropped_set.add(k.split(".")[2])
-                else:
-                    buff[k] = v
-            if dropped_set:
-                print(f"Dropped {dropped_set} from ema model")
-            value_new = buff
             
             # 如果 strict=False，过滤掉不匹配的键（但保留 normalizer 参数）
             if not kwargs.get('strict', True):
