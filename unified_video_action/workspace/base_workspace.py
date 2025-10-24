@@ -62,17 +62,12 @@ class BaseWorkspace:
             elif key in include_keys:
                 payload["pickles"][key] = dill.dumps(value)
 
-        if use_thread:
-            self._saving_thread = threading.Thread(
-                target=lambda: torch.save(payload, path.open("wb"))
-            )
-            self._saving_thread.start()
-        else:
-            payload_cpu = {
-                key: value.cpu() if isinstance(value, torch.Tensor) else value
-                for key, value in payload.items()
-            }
-            torch.save(payload_cpu, path.open("wb"))
+        # Disable threading to avoid shared memory issues
+        payload_cpu = {
+            key: value.cpu() if isinstance(value, torch.Tensor) else value
+            for key, value in payload.items()
+        }
+        torch.save(payload_cpu, path.open("wb"))
 
         return str(path.absolute())
 
