@@ -62,6 +62,7 @@ policy:
     predict_action: True
     act_model_type: conv_fc
     diff_model_type: MLP
+    learn_sigma: true  # 匹配检查点的输出维度
   
   shift_action: True
     
