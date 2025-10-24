@@ -118,20 +118,21 @@ class BaseWorkspace:
                     else:
                         if not kwargs.get('strict', True):
 
-                            has_ucgm_params = any(k.startswith("model.diffactloss.ucgmts") or 
-                                                 k.startswith("model.diffactloss.net.final_layer") 
-                                                 for k in value_new.keys())
-                            if has_ucgm_params:
-                                drop_prefixes = ("model.diffactloss.ucgmts", "model.diffactloss.net.final_layer")
+                            has_ucgm_mod_params = any(k.startswith("model.diffactloss.ucgmts.mod") or 
+                                                     k.startswith("model.diffactloss.net.final_layer") 
+                                                     for k in value_new.keys())
+                            if has_ucgm_mod_params:
+                                # Only drop mod-related parameters, keep other UCGM parameters
+                                drop_prefixes = ("model.diffactloss.ucgmts.mod", "model.diffactloss.net.final_layer")
                                 buff = {}
                                 for k, v in value_new.items():
                                     if k.startswith(drop_prefixes):
-                                        print(f"[Resume Training] Dropped {k}")
+                                        print(f"[Evaluation] Dropped {k}")
                                     else:
                                         buff[k] = v
                                 value_new = buff
                             else:
-                                print(f"[Resume Training] Full loading")
+                                print(f"[Evaluation] Full loading")
                     print(f"Loading {key}")
                     load_result = self.__dict__[key].load_state_dict(value_new, **kwargs)
                 except Exception as e:

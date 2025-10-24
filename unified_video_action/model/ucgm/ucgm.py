@@ -205,6 +205,7 @@ class UCGMTS(torch.nn.Module):
             self.mod = deepcopy(model).requires_grad_(False).train()
             self._mod_initialized = True
 
+
     def sample_beta(self, alpha, beta, size):
         beta_dist = torch.distributions.Beta(alpha, beta)
         beta_samples = beta_dist.sample(size)

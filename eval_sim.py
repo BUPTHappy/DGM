@@ -157,7 +157,7 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_samp
 
     print("Loaded checkpoint from %s" % checkpoint)
 
-    workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=True)
+    workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=False)
     
     # Re-copy encoder parameters to local causal encoder blocks after loading checkpoint
     if hasattr(workspace.model, 'model') and hasattr(workspace.model.model, 'copy_encoder_parameters'):
