@@ -62,7 +62,7 @@ policy:
     predict_action: True
     act_model_type: conv_fc
     diff_model_type: MLP
-    learn_sigma: false  # 不学 sigma，避免维度不匹配
+    learn_sigma: true  # 匹配 pusht.ckpt 的维度
   
   shift_action: True
     

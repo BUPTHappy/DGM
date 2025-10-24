@@ -179,6 +179,18 @@ class BaseWorkspace:
             if dropped_set:
                 print(f"Dropped {dropped_set} from ema model")
             value_new = buff
+            
+            # 如果 strict=False，过滤掉不匹配的键
+            if not kwargs.get('strict', True):
+                model_state = self.__dict__["model"].state_dict()
+                filtered_value_new = {}
+                for k, v in value_new.items():
+                    if k in model_state and model_state[k].shape == v.shape:
+                        filtered_value_new[k] = v
+                    else:
+                        print(f"Skipping mismatched key: {k}, checkpoint shape: {v.shape}, model shape: {model_state.get(k, 'missing')}")
+                value_new = filtered_value_new
+            
             load_result = self.__dict__["model"].load_state_dict(value_new, **kwargs)
             print(f"FOR KEY {key}")
             missing_keys = set([
