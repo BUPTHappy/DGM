@@ -108,15 +108,6 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_samp
                 else:
                     cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
         
-        # 处理local attention参数
-        if window_size is not None:
-            cfg.model.policy.autoregressive_model_params.window_size = window_size
-        if lambda_local is not None:
-            cfg.model.policy.autoregressive_model_params.lambda_local = lambda_local
-    
-        
-
-    
     # Always ensure use_ucgm is True when --use_ucgm flag is used
     if use_ucgm:
         OmegaConf.set_struct(cfg, False)  # Allow new keys
@@ -128,6 +119,12 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_samp
         OmegaConf.set_struct(cfg, False)  # Allow new keys
         cfg.model.policy.autoregressive_model_params.use_ucgm = True
         print("Auto-detected UCGM mode from checkpoint")
+
+    # 处理local attention参数 - 在解除结构化限制之后
+    if window_size is not None:
+        cfg.model.policy.autoregressive_model_params.window_size = window_size
+    if lambda_local is not None:
+        cfg.model.policy.autoregressive_model_params.lambda_local = lambda_local
 
     if pruning_ratios_file is not None:
         with open(pruning_ratios_file, 'r') as f:
