@@ -394,6 +394,8 @@ class TrainingBayesianOptimizer:
         """
         try:
             print(f"Applying parameters to model: {params}")
+            print(f"Model type: {type(model)}")
+            print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
             
             # Print current model parameters before update
             print(f"\n{'='*50}")

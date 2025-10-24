@@ -546,9 +546,11 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     
                     if best_params is not None:
                         # Apply best parameters to model
+                        # Always use the main model, not EMA model, for parameter updates
                         policy = accelerator.unwrap_model(self.model)
-                        if cfg.training.use_ema:
-                            policy = self.ema_model
+                        
+                        print(f"Policy type: {type(policy)}")
+                        print(f"Policy attributes: {[attr for attr in dir(policy) if not attr.startswith('_')]}")
                         
                         success = self.bayesian_optimizer.apply_best_params_to_model(policy, best_params)
                         
