@@ -180,12 +180,15 @@ class BaseWorkspace:
                 print(f"Dropped {dropped_set} from ema model")
             value_new = buff
             
-            # 如果 strict=False，过滤掉不匹配的键
+            # 如果 strict=False，过滤掉不匹配的键（但保留 normalizer 参数）
             if not kwargs.get('strict', True):
                 model_state = self.__dict__["model"].state_dict()
                 filtered_value_new = {}
                 for k, v in value_new.items():
-                    if k in model_state and model_state[k].shape == v.shape:
+                    # 保留 normalizer 参数，即使它们不在当前模型中
+                    if k.startswith("normalizer."):
+                        filtered_value_new[k] = v
+                    elif k in model_state and model_state[k].shape == v.shape:
                         filtered_value_new[k] = v
                     else:
                         print(f"Skipping mismatched key: {k}, checkpoint shape: {v.shape}, model shape: {model_state.get(k, 'missing')}")
