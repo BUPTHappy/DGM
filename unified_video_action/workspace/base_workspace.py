@@ -113,6 +113,16 @@ class BaseWorkspace:
                             else:
                                 buff[k] = v
                         value_new = buff
+                    
+                    # 无条件 drop ucgmts.mod 参数，因为当前模型可能没有这些参数
+                    drop_prefixes = ("model.diffactloss.ucgmts.mod", "model.diffloss.ucgmts.mod")
+                    buff = {}
+                    for k, v in value_new.items():
+                        if k.startswith(drop_prefixes):
+                            print(f"Dropped {k}")
+                        else:
+                            buff[k] = v
+                    value_new = buff
                     print(f"Loading {key}")
                     print(f"kwargs: {kwargs}")  # 调试信息
                     
@@ -159,6 +169,19 @@ class BaseWorkspace:
                 value_new = buff
                 if dropped_set:
                     print(f"Dropped {dropped_set} from ema model")
+            
+            # 无条件 drop ucgmts.mod 参数，因为当前模型可能没有这些参数
+            drop_prefixes = ("model.diffactloss.ucgmts.mod", "model.diffloss.ucgmts.mod")
+            buff = {}
+            dropped_set = set()
+            for k, v in value_new.items():
+                if k.startswith(drop_prefixes):
+                    dropped_set.add(k.split(".")[3])  # ucgmts.mod
+                else:
+                    buff[k] = v
+            value_new = buff
+            if dropped_set:
+                print(f"Dropped ucgmts.mod from ema model")
             
             # 如果 strict=False，过滤掉不匹配的键（但保留 normalizer 参数）
             if not kwargs.get('strict', True):
