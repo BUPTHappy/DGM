@@ -125,6 +125,7 @@ class BaseWorkspace:
                             buff[k] = v
                     value_new = buff
                     print(f"Loading {key}")
+                    print(f"kwargs: {kwargs}")  # 调试信息
                     load_result = self.__dict__[key].load_state_dict(value_new, **kwargs)
                 except Exception as e:
                     #print(f"{key=}, {value_new.keys()=}, {value_new=}, {kwargs=}")

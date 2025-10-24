@@ -89,10 +89,14 @@ def main(cfg: OmegaConf):
     if cfg.payload:
         print(f"Loading checkpoint from: {cfg.payload}")
         payload = torch.load(open(cfg.payload, "rb"), pickle_module=dill)
+        # 从配置文件读取 strict_loading 参数，默认为 False
+        strict_loading = getattr(cfg, 'strict_loading', False)
+        print(f"strict_loading from config: {strict_loading}")  # 调试信息
+        
         if cfg.training.use_ema:
-            workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=False)
+            workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=strict_loading)
         else:
-            workspace.load_payload_new(payload, exclude_keys=['ema_model'], include_keys=None, diffhead_finetuning=True, strict=False)
+            workspace.load_payload_new(payload, exclude_keys=['ema_model'], include_keys=None, diffhead_finetuning=True, strict=strict_loading)
 
     if cfg.freeze_submodules:
         workspace.freeze_submodules(action_only=True)

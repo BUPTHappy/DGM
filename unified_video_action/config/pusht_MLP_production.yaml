@@ -73,7 +73,7 @@ multi_run:
   run_dir: data/outputs/train_uva_pusht_mlp_bayesian_production_resume
   wandb_name_base: train_uva_pusht_mlp_bayesian_production_resume
 
-payload: /home/zhuliu/workspace/Towards-Generalizable-Embodied-AI-via-Diffusion-Based-Robotic-Policies/checkpoints/pusht.ckpt
+payload: ./checkpoints/pusht.ckpt
 freeze_submodules: true
 strict_loading: false  # 允许忽略不匹配的层
 
