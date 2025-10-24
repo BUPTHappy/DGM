@@ -126,6 +126,18 @@ class BaseWorkspace:
                     value_new = buff
                     print(f"Loading {key}")
                     print(f"kwargs: {kwargs}")  # 调试信息
+                    
+                    # 如果 strict=False，过滤掉不匹配的键
+                    if not kwargs.get('strict', True):
+                        model_state = self.__dict__[key].state_dict()
+                        filtered_value_new = {}
+                        for k, v in value_new.items():
+                            if k in model_state and model_state[k].shape == v.shape:
+                                filtered_value_new[k] = v
+                            else:
+                                print(f"Skipping mismatched key: {k}, checkpoint shape: {v.shape}, model shape: {model_state.get(k, 'missing')}")
+                        value_new = filtered_value_new
+                    
                     load_result = self.__dict__[key].load_state_dict(value_new, **kwargs)
                 except Exception as e:
                     #print(f"{key=}, {value_new.keys()=}, {value_new=}, {kwargs=}")
