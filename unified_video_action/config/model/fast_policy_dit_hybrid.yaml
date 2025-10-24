@@ -62,7 +62,7 @@ policy:
     predict_action: True
     act_model_type: conv_fc
     diff_model_type: DiT_patches_hybrid
-    learn_sigma: true  # 匹配 pusht.ckpt 的维度
+    learn_sigma: false  # 不学 sigma，避免维度不匹配
   
   shift_action: True
     
