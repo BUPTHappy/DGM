@@ -127,6 +127,7 @@ class DiffActLoss(nn.Module):
         )
         self.stochasticity_ratio = ucgmts_config.get("consistc_ratio", 1.0)
         self.rfba_gap_steps = ucgmts_config.get("rfba_gap_steps", [0.001, 0.5])
+        self.ucgmts_config = ucgmts_config
 
     def forward(self, target, z, task_mode=None, text_latents=None):
         bsz, seq_len, _ = target.shape
