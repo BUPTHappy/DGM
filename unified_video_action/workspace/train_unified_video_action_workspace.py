@@ -95,7 +95,8 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                 final_n_test=cfg.bayesian_optimization.final_n_test,
                 device=cfg.bayesian_optimization.device,
                 output_dir=cfg.bayesian_optimization.output_dir,
-                use_best_checkpoint_for_final=cfg.bayesian_optimization.use_best_checkpoint_for_final
+                use_best_checkpoint_for_final=cfg.bayesian_optimization.use_best_checkpoint_for_final,
+                optimization_mode=cfg.bayesian_optimization.optimization_mode
             )
             print(f"Bayesian optimization enabled: start_epoch={cfg.bayesian_optimization.start_epoch}, interval={cfg.bayesian_optimization.interval}")
             
@@ -542,20 +543,29 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     print(f"Using checkpoint: {checkpoint_path}")
                     # Run Bayesian optimization
                     checkpoints_dir = os.path.join(self.output_dir, "checkpoints")
-                    best_params = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch, checkpoints_dir)
+                    optimization_result = self.bayesian_optimizer.run_optimization(checkpoint_path, self.epoch, checkpoints_dir)
                     
-                    if best_params is not None:
-                        # Apply best parameters to model
+                    if optimization_result is not None:
+                        best_params, best_score = optimization_result
+                        
+                        # Apply best parameters to model with score comparison
                         # Always use the main model, not EMA model, for parameter updates
                         policy = accelerator.unwrap_model(self.model)
                         
                         print(f"Policy type: {type(policy)}")
                         print(f"Policy attributes: {[attr for attr in dir(policy) if not attr.startswith('_')]}")
                         
-                        success = self.bayesian_optimizer.apply_best_params_to_model(policy, best_params, workspace=self)
+                        success = self.bayesian_optimizer.apply_best_params_to_model(
+                            policy, 
+                            best_params, 
+                            workspace=self,
+                            current_checkpoint_path=checkpoint_path,
+                            optimized_score=best_score
+                        )
                         
                         if success:
-                            print(f"Successfully applied optimized parameters to model")
+                            print(f"✅ Successfully applied optimized parameters to model")
+                            print(f"   Optimized score: {best_score:.4f}")
                             
                             # CRITICAL: Also update workspace cfg to ensure parameters are saved in checkpoint
                             if hasattr(self, 'cfg') and self.cfg is not None:
@@ -791,7 +801,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         elif hasattr(ema_model, 'model') and hasattr(ema_model.model, 'autoregressive_model_params'):
                             ema_autoregressive_params = ema_model.model.autoregressive_model_params
                         else:
-                            print("❌ Cannot find EMA autoregressive_model_params")
+                            print("Cannot find EMA autoregressive_model_params")
                             return False
                         
                         ema_autoregressive_params.use_ucgm = True

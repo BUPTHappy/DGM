@@ -67,7 +67,8 @@ def main(cfg: OmegaConf):
                 'max_trials': 15,  # Reduced trials for training integration
                 'n_test': 5,  # Reduced test count for faster evaluation
                 'device': 'cuda:0',
-                'output_dir': './bayesian_optimization_logs'
+                'output_dir': './bayesian_optimization_logs',
+                'optimization_mode': 'balanced'  # speed_priority, performance_priority, or balanced
             })
 
     if cfg.training.debug:

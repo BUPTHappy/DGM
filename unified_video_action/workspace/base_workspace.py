@@ -62,12 +62,17 @@ class BaseWorkspace:
             elif key in include_keys:
                 payload["pickles"][key] = dill.dumps(value)
 
-        # Disable threading to avoid shared memory issues
-        payload_cpu = {
-            key: value.cpu() if isinstance(value, torch.Tensor) else value
-            for key, value in payload.items()
-        }
-        torch.save(payload_cpu, path.open("wb"))
+        if use_thread:
+            self._saving_thread = threading.Thread(
+                target=lambda: torch.save(payload, path.open("wb"))
+            )
+            self._saving_thread.start()
+        else:
+            payload_cpu = {
+                key: value.cpu() if isinstance(value, torch.Tensor) else value
+                for key, value in payload.items()
+            }
+            torch.save(payload_cpu, path.open("wb"))
 
         return str(path.absolute())
 
@@ -108,7 +113,7 @@ class BaseWorkspace:
                         buff = {}
                         for k, v in value_new.items():
                             if k.startswith(drop_prefixes):
-                                print(f"Dropped {k}")
+                                pass
                             else:
                                 buff[k] = v
                         value_new = buff
@@ -118,7 +123,8 @@ class BaseWorkspace:
                     buff = {}
                     for k, v in value_new.items():
                         if k.startswith(drop_prefixes):
-                            print(f"Dropped {k}")
+                            #print(f"Dropped {k}")
+                            pass
                         else:
                             buff[k] = v
                     value_new = buff

@@ -119,7 +119,9 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
             restore_after_encoder=getattr(autoregressive_model_params, 'restore_after_encoder', False),
             pruning_ratios=getattr(autoregressive_model_params, 'pruning_ratios', None),
             use_ucgm=use_ucgm,
-            ucgmts_config=getattr(autoregressive_model_params, "ucgmts_config", {})
+            ucgmts_config=getattr(autoregressive_model_params, "ucgmts_config", {}),
+            window_size=getattr(autoregressive_model_params, "window_size", 15),
+            lambda_local=getattr(autoregressive_model_params, "lambda_local", 0.1)
         )
 
         ## =========================== load pretrained model ===========================

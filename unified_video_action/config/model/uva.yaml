@@ -38,6 +38,9 @@ policy:
     num_sampling_steps: "100"
     diffusion_batch_mul: 1
     grad_checkpointing: False
+    # Local attention parameters
+    window_size: 15
+    lambda_local: 0.1
     #
     num_iter: 1
     cfg: 1
@@ -62,4 +65,18 @@ policy:
     betas:
     - 0.9
     - 0.95
+
+# Bayesian optimization configuration
+bayesian_optimization:
+  enabled: true
+  optimization_mode: "balanced"  # speed_priority, performance_priority, or balanced
+  start_epoch: 150  # Start optimization at 75% of training (assuming 200 epochs)
+  interval: 10     # Optimize every 10 epochs
+  max_trials: 15   # Maximum trials per optimization run
+  final_trials: 20 # Final optimization trials
+  n_test: 5        # Number of test runs per evaluation
+  final_n_test: 8  # Final optimization test count
+  device: "cuda:0"
+  output_dir: "./bayesian_optimization_logs"
+  use_best_checkpoint_for_final: true
 

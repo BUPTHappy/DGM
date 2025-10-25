@@ -32,7 +32,8 @@ class TrainingBayesianOptimizer:
                  final_n_test: int = 5,    # Final optimization test count
                  device: str = "cuda:0",
                  output_dir: str = "./bayesian_optimization_logs",
-                 use_best_checkpoint_for_final: bool = True):
+                 use_best_checkpoint_for_final: bool = True,
+                 optimization_mode: str = "balanced"):
         """
         Initialize the training-integrated Bayesian optimizer.
         
@@ -47,6 +48,7 @@ class TrainingBayesianOptimizer:
             device: Device for evaluation
             output_dir: Output directory for optimization logs
             use_best_checkpoint_for_final: Whether to use best checkpoint for final optimization
+            optimization_mode: Optimization mode - "speed_priority", "performance_priority", or "balanced"
         """
         self.config = config
         self.start_epoch = start_epoch
@@ -58,6 +60,12 @@ class TrainingBayesianOptimizer:
         self.device = device
         self.output_dir = output_dir
         self.use_best_checkpoint_for_final = use_best_checkpoint_for_final
+        self.optimization_mode = optimization_mode
+        
+        # Validate optimization mode
+        valid_modes = ["speed_priority", "performance_priority", "balanced"]
+        if optimization_mode not in valid_modes:
+            raise ValueError(f"Invalid optimization_mode: {optimization_mode}. Must be one of {valid_modes}")
         
         # Create output directory
         os.makedirs(output_dir, exist_ok=True)
@@ -79,12 +87,126 @@ class TrainingBayesianOptimizer:
         print(f"  N test (final): {final_n_test}")
         print(f"  Use best checkpoint for final: {use_best_checkpoint_for_final}")
         print(f"  Output dir: {output_dir}")
+        print(f"  Optimization mode: {optimization_mode}")
     
     def should_optimize(self, current_epoch: int) -> bool:
         """Check if optimization should be performed at current epoch."""
         return (current_epoch >= self.start_epoch and 
                 (current_epoch - self.start_epoch) % self.interval == 0)
     
+    def get_current_checkpoint_score(self, checkpoint_path: str) -> float:
+        """
+        Get the current checkpoint score for comparison.
+        
+        Args:
+            checkpoint_path: Path to current checkpoint
+            
+        Returns:
+            Current checkpoint score, or -1000.0 if evaluation fails
+        """
+        try:
+            print(f"Evaluating current checkpoint: {checkpoint_path}")
+            
+            # Clear CUDA cache before evaluation
+            torch.cuda.empty_cache()
+            
+            # Wait a bit to ensure checkpoint is fully written
+            import time
+            time.sleep(5)
+            
+            # Check if checkpoint file is valid before loading
+            if not self._is_checkpoint_valid(checkpoint_path):
+                print(f"Checkpoint file is invalid or corrupted: {checkpoint_path}")
+                return -1000.0
+            
+            # Load checkpoint and config
+            payload = torch.load(open(checkpoint_path, "rb"), pickle_module=dill, weights_only=False)
+            cfg = payload["cfg"]
+            
+            # Set test count
+            if "libero" in cfg.task.name:
+                cfg.task.env_runner.n_test = self.n_test
+            else:
+                cfg.task.env_runner.n_test = min(self.n_test * 5, 50)
+            
+            # Create temp output directory
+            temp_output_dir = tempfile.mkdtemp(prefix="current_eval_")
+            
+            # Run evaluation with current parameters (no parameter modification)
+            cmd = [
+                "python", "eval_sim.py",
+                "--checkpoint", checkpoint_path,
+                "--output_dir", temp_output_dir,
+                "--device", self.device,
+                "--use_ucgm"
+            ]
+            
+            env = os.environ.copy()
+            env["CUDA_VISIBLE_DEVICES"] = self.device.split(":")[-1] if ":" in self.device else "0"
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=180
+            )
+            
+            if result.returncode != 0:
+                print(f"Current checkpoint evaluation failed: {result.stderr}")
+                return -1000.0
+            
+            # Parse results
+            eval_log_path = os.path.join(temp_output_dir, f'eval_log_{os.path.basename(checkpoint_path)}.json')
+            
+            if not os.path.exists(eval_log_path):
+                print(f"Current eval log not found: {eval_log_path}")
+                return -1000.0
+            
+            with open(eval_log_path, 'r') as f:
+                eval_results = json.load(f)
+            
+            # Extract score
+            if "test_mean_score" in eval_results:
+                score = eval_results["test_mean_score"]
+            elif "test/pusht_mean_score" in eval_results:
+                score = eval_results["test/pusht_mean_score"]
+            elif "test/libero10_mean_score" in eval_results:
+                score = eval_results["test/libero10_mean_score"]
+            else:
+                score_keys = [k for k in eval_results.keys() if "score" in k.lower()]
+                if score_keys:
+                    score = eval_results[score_keys[0]]
+                else:
+                    print(f"No score found in current checkpoint, available keys: {list(eval_results.keys())}")
+                    return -1000.0
+            
+            print(f"Current checkpoint score: {score}")
+            
+            # Cleanup
+            subprocess.run(["rm", "-rf", temp_output_dir], check=False)
+            
+            return float(score)
+            
+        except subprocess.TimeoutExpired:
+            print("Current checkpoint evaluation timeout")
+            torch.cuda.empty_cache()
+            return -1000.0
+        except RuntimeError as e:
+            if "CUDA" in str(e) or "cuda" in str(e).lower():
+                print(f"CUDA error during current checkpoint evaluation: {e}")
+                print("Clearing CUDA cache and retrying...")
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                return -1000.0
+            else:
+                print(f"Runtime error during current checkpoint evaluation: {e}")
+                return -1000.0
+        except Exception as e:
+            print(f"Current checkpoint evaluation error: {e}")
+            torch.cuda.empty_cache()
+            return -1000.0
+
     def find_best_checkpoint(self, checkpoints_dir: str) -> Optional[str]:
         """
         Find the best checkpoint based on test_mean_score.
@@ -145,7 +267,7 @@ class TrainingBayesianOptimizer:
             
             # Wait a bit to ensure checkpoint is fully written
             import time
-            time.sleep(2)
+            time.sleep(5)
             
             # Check if checkpoint file is valid before loading
             if not self._is_checkpoint_valid(checkpoint_path):
@@ -154,7 +276,7 @@ class TrainingBayesianOptimizer:
             
             # Load checkpoint and config
             payload = torch.load(open(checkpoint_path, "rb"), pickle_module=dill, weights_only=False)
-            cfg = payload["cfg"]
+            cfg = payload["cfg"] #model config
             
             # Update config parameters
             with open_dict(cfg.model.policy.autoregressive_model_params):
@@ -268,7 +390,7 @@ class TrainingBayesianOptimizer:
     def run_optimization(self, 
                         checkpoint_path: str, 
                         current_epoch: int,
-                        checkpoints_dir: str = None) -> Optional[Dict[str, Any]]:
+                        checkpoints_dir: str = None) -> Optional[Tuple[Dict[str, Any], float]]:
         """
         Run Bayesian optimization for current epoch.
         
@@ -278,7 +400,7 @@ class TrainingBayesianOptimizer:
             checkpoints_dir: Directory containing checkpoints (for finding best checkpoint)
             
         Returns:
-            Best parameters found, or None if optimization failed
+            Tuple of (best parameters, best score) if optimization succeeded, None otherwise
         """
         print(f"\n{'='*60}")
         print(f"Starting Bayesian optimization at epoch {current_epoch}")
@@ -315,8 +437,8 @@ class TrainingBayesianOptimizer:
             n_test = self.n_test
             print(f"Normal phase: max_trials={max_trials}, n_test={n_test}")
         
-        # Create a temporary optimizer with adjusted parameters
-        temp_optimizer = UCGMBayesianOptimizer(max_trials=max_trials)
+        # Create a temporary optimizer with adjusted parameters and mode-specific ranges
+        temp_optimizer = UCGMBayesianOptimizer(max_trials=max_trials, optimization_mode=self.optimization_mode)
         
         def objective_function(params):
             return self.evaluate_model_with_params(params, checkpoint_path)
@@ -370,7 +492,7 @@ class TrainingBayesianOptimizer:
                 with open(history_file, 'w') as f:
                     json.dump(self.optimization_history, f, indent=2)
                 
-                return best_params
+                return (best_params, best_score)
             else:
                 print("Optimization failed or no valid parameters found")
                 return None
@@ -382,19 +504,54 @@ class TrainingBayesianOptimizer:
     def apply_best_params_to_model(self, 
                                  model, 
                                  params: Dict[str, Any],
-                                 workspace=None) -> bool:
+                                 workspace=None,
+                                 current_checkpoint_path: str = None,
+                                 optimized_score: float = None) -> bool:
         """
-        Apply the best parameters to the model.
+        Apply the best parameters to the model, but only if they perform better than current checkpoint.
         
         Args:
             model: The model to update
             params: Parameters to apply
+            workspace: Workspace object for updating config
+            current_checkpoint_path: Path to current checkpoint for score comparison
+            optimized_score: Score achieved by optimized parameters
             
         Returns:
-            True if successful, False otherwise
+            True if parameters were applied, False otherwise
         """
         try:
-            print(f"Applying parameters to model: {params}")
+            # Score comparison logic
+            if current_checkpoint_path is not None and optimized_score is not None:
+                print(f"\n{'='*60}")
+                print(f"SCORE COMPARISON:")
+                print(f"{'='*60}")
+                print(f"Optimized score: {optimized_score:.4f}")
+                
+                # Get current checkpoint score
+                current_score = self.get_current_checkpoint_score(current_checkpoint_path)
+                
+                if current_score > -1000.0:  # Valid score
+                    print(f"Current checkpoint score: {current_score:.4f}")
+                    improvement = optimized_score - current_score
+                    print(f"Improvement: {improvement:+.4f}")
+                    
+                    if optimized_score <= current_score:
+                        print(f"   Optimized: {optimized_score:.4f} <= Current: {current_score:.4f}")
+                        print(f"   Skipping parameter application to avoid performance degradation")
+                        return False
+                    else:
+                        print(f"   Optimized: {optimized_score:.4f} > Current: {current_score:.4f}")
+                        print(f"   Proceeding with parameter application")
+                else:
+                    print(f"Failed to get current checkpoint score, proceeding with parameter application")
+            else:
+                print(f"No score comparison available, proceeding with parameter application")
+            
+            print(f"\n{'='*60}")
+            print(f"APPLYING PARAMETERS TO MODEL:")
+            print(f"{'='*60}")
+            print(f"Parameters: {params}")
             print(f"Model type: {type(model)}")
             print(f"Model attributes: {[attr for attr in dir(model) if not attr.startswith('_')]}")
             
@@ -482,12 +639,11 @@ class TrainingBayesianOptimizer:
             if not hasattr(autoregressive_params, 'ucgmts_config'):
                 autoregressive_params.ucgmts_config = OmegaConf.create({})
             
-            autoregressive_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
+            # Only update the optimized parameters, keep default values for fixed parameters
             autoregressive_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
-            autoregressive_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
-            autoregressive_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
             autoregressive_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
             autoregressive_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+            # Note: transport_type, scaled_cbl_eps, ema_decay_rate are kept as default values
             
             # Also update the actual model components
             # Handle different model wrapping scenarios
@@ -508,12 +664,11 @@ class TrainingBayesianOptimizer:
                 
                 if hasattr(diffactloss, 'ucgmts'):
                     ucgmts = diffactloss.ucgmts
-                    ucgmts.transport_type = params['ucgmts_config']['transport_type']
+                    # Only update the optimized parameters, keep default values for fixed parameters
                     ucgmts.consistc_ratio = params['ucgmts_config']['consistc_ratio']
-                    ucgmts.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
-                    ucgmts.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
                     ucgmts.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
                     ucgmts.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    # Note: transport_type, scaled_cbl_eps, ema_decay_rate are kept as default values
             
             # Print updated model parameters
             print(f"\n{'='*50}")
@@ -526,13 +681,11 @@ class TrainingBayesianOptimizer:
             print(f"Updated lambda_local: {autoregressive_params.lambda_local}")
             print(f"Updated use_ucgm: {autoregressive_params.use_ucgm}")
             
-            print(f"Updated ucgmts_config:")
-            print(f"  transport_type: {autoregressive_params.ucgmts_config.transport_type}")
+            print(f"Updated ucgmts_config (optimized parameters only):")
             print(f"  consistc_ratio: {autoregressive_params.ucgmts_config.consistc_ratio}")
-            print(f"  scaled_cbl_eps: {autoregressive_params.ucgmts_config.scaled_cbl_eps}")
-            print(f"  ema_decay_rate: {autoregressive_params.ucgmts_config.ema_decay_rate}")
             print(f"  rfba_gap_steps: {autoregressive_params.ucgmts_config.rfba_gap_steps}")
             print(f"  extrapol_ratio: {autoregressive_params.ucgmts_config.extrapol_ratio}")
+            print(f"  (transport_type, scaled_cbl_eps, ema_decay_rate kept as default)")
             
             # Also print the actual model components
             if hasattr(actual_model, 'diffactloss'):
@@ -540,11 +693,11 @@ class TrainingBayesianOptimizer:
                 print(f"Updated DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
                 if hasattr(diffactloss, 'ucgmts'):
                     ucgmts = diffactloss.ucgmts
-                    print(f"Updated UCGMTS parameters:")
-                    print(f"  transport_type: {ucgmts.transport_type}")
+                    print(f"Updated UCGMTS parameters (optimized only):")
                     print(f"  consistc_ratio: {ucgmts.consistc_ratio}")
                     print(f"  rfba_gap_steps: {ucgmts.rfba_gap_steps}")
                     print(f"  extrapol_ratio: {ucgmts.extrapol_ratio}")
+                    print(f"  (transport_type, scaled_cbl_eps, ema_decay_rate kept as default)")
             print(f"{'='*50}")
             
             # CRITICAL: Also update the workspace cfg to ensure parameters are saved in checkpoint
@@ -560,12 +713,11 @@ class TrainingBayesianOptimizer:
                     workspace.cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
                     workspace.cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
                     
-                    workspace.cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = params['ucgmts_config']['transport_type']
+                    # Only update the optimized parameters, keep default values for fixed parameters
                     workspace.cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = params['ucgmts_config']['consistc_ratio']
-                    workspace.cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = params['ucgmts_config']['scaled_cbl_eps']
-                    workspace.cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = params['ucgmts_config']['ema_decay_rate']
                     workspace.cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = params['ucgmts_config']['rfba_gap_steps']
                     workspace.cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = params['ucgmts_config']['extrapol_ratio']
+                    # Note: transport_type, scaled_cbl_eps, ema_decay_rate are kept as default values
                     
                     print("✓ Updated workspace.cfg with optimized parameters")
             

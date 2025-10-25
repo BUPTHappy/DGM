@@ -235,7 +235,7 @@ class DiffActLoss(nn.Module):
                 sampling_model=self.net,
                 sampling_steps=self.num_sampling_steps,
                 stochast_ratio=self.stochasticity_ratio,
-                extrapol_ratio=0,
+                extrapol_ratio=self.ucgmts_config.get("extrapol_ratio", 0),
                 sampling_order=1,
                 time_dist_ctrl=[1.17, 0.8, 1.1],
                 rfba_gap_steps=self.rfba_gap_steps,
