@@ -9,14 +9,14 @@ dataloader:
   batch_size: 32
   num_workers: 0
   persistent_workers: false
-  pin_memory: true
+  pin_memory: false
   shuffle: true
 
 val_dataloader:
   batch_size: 32
   num_workers: 0
   persistent_workers: false
-  pin_memory: true
+  pin_memory: false
   shuffle: false
 
 training:
