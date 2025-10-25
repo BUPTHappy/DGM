@@ -83,7 +83,7 @@ save_folder: ./logs/time_logs/pusht_mlp_ucgm_few_steps_sample_4
 bayesian_optimization:
   enabled: true
   optimization_mode: "balanced"  # speed_priority, performance_priority, or balanced
-  start_epoch: 10  # 从75%位置开始（200*3/4=150），确保训练稳定性
+  start_epoch: 150  # 从75%位置开始（200*3/4=150），确保训练稳定性
   interval: 10      # 每10个epoch优化一次
   max_trials: 10    # 中期优化用15个trials
   final_trials: 15  # 最终优化用20个trials
