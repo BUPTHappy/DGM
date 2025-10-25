@@ -235,11 +235,18 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
             # configure dataset
             dataset: BaseImageDataset
             dataset = hydra.utils.instantiate(cfg.task.dataset)
-            train_dataloader = DataLoader(dataset, **cfg.dataloader)
+            # 强制使用单进程以避免共享内存问题
+            dataloader_cfg = copy.deepcopy(cfg.dataloader)
+            dataloader_cfg['num_workers'] = 0
+            dataloader_cfg['pin_memory'] = False
+            train_dataloader = DataLoader(dataset, **dataloader_cfg)
 
             # configure validation dataset
             val_dataset = dataset.get_validation_dataset()
-            val_dataloader = DataLoader(val_dataset, **cfg.val_dataloader)
+            val_dataloader_cfg = copy.deepcopy(cfg.val_dataloader)
+            val_dataloader_cfg['num_workers'] = 0
+            val_dataloader_cfg['pin_memory'] = False
+            val_dataloader = DataLoader(val_dataset, **val_dataloader_cfg)
             print(
                 "train dataset:",
                 len(dataset),
