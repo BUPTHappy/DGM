@@ -2,7 +2,7 @@ name: uva
 
 defaults:
   - _self_
-  - task: pusht
+  - task: libero10
   - model: fast_policy
 
 dataloader:
@@ -28,9 +28,9 @@ training:
   lr_warmup_steps: 1000
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 250  # 完整200个epoch训练
+  num_epochs: 3050  # LIBERO-10需要更多epoch训练
   resume: true
-  rollout_every: 1
+  rollout_every: 50
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0
@@ -59,32 +59,32 @@ logging:
   group: null
   id: null
   mode: offline  # 改为offline模式，避免wandb API key问题
-  name: train_uva_pusht_mlp_bayesian_production
+  name: train_uva_libero10_mlp_bayesian_production
   project: unified_video_action
   resume: false
   tags:
-  - train_uva_pusht
-  - pusht
+  - train_uva_libero10
+  - libero10
   - mlp
   - bayesian_optimization
   - production
 
 multi_run:
-  run_dir: data/outputs/train_uva_pusht_mlp_bayesian_production_resume
-  wandb_name_base: train_uva_pusht_mlp_bayesian_production_resume
+  run_dir: data/outputs/train_uva_libero10_mlp_bayesian_production_resume
+  wandb_name_base: train_uva_libero10_mlp_bayesian_production_resume
 
-payload: ./checkpoints/pusht.ckpt
+payload: ./checkpoints/libero10.ckpt
 freeze_submodules: true
 strict_loading: false  # 允许忽略不匹配的层
 
-save_folder: ./logs/time_logs/pusht_mlp_ucgm_few_steps_sample_4
+save_folder: ./logs/time_logs/libero10_mlp_ucgm_few_steps_sample_4
 
 # Bayesian Optimization Configuration for Production
 bayesian_optimization:
   enabled: true
   optimization_mode: "balanced"  # speed_priority, performance_priority, or balanced
-  start_epoch: 190  # 从75%位置开始（200*3/4=150），确保训练稳定性
-  interval: 20      # 每10个epoch优化一次
+  start_epoch: 2200  # 从75%位置开始（3050*3/4=2288），确保训练稳定性
+  interval: 10      # 每10个epoch优化一次
   max_trials: 10    # 中期优化用15个trials
   final_trials: 15  # 最终优化用20个trials
   n_test: 5         # 正常优化用5个test

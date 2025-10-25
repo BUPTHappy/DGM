@@ -564,7 +564,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         )
                         
                         if success:
-                            print(f"✅ Successfully applied optimized parameters to model")
+                            print(f" Successfully applied optimized parameters to model")
                             print(f"   Optimized score: {best_score:.4f}")
                             
                             # CRITICAL: Also update workspace cfg to ensure parameters are saved in checkpoint
@@ -656,7 +656,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
         # Final Bayesian optimization after training completion
         if (self.bayesian_optimizer is not None and 
             accelerator.is_main_process and 
-            self.epoch >= 200):
+            self.epoch >= cfg.training.num_epochs):
             
             print(f"\n{'='*60}")
             print(f"FINAL BAYESIAN OPTIMIZATION")
