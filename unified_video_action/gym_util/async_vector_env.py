@@ -562,7 +562,11 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
     parent_pipe.close()
     try:
         while True:
-            command, data = pipe.recv()
+            try:
+                command, data = pipe.recv()
+            except (EOFError, BrokenPipeError, OSError):
+                # 管道已断开，退出循环
+                break
             if command == "reset":
                 observation = env.reset()
                 pipe.send((observation, True))
@@ -604,7 +608,11 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
                 )
     except (KeyboardInterrupt, Exception):
         error_queue.put((index,) + sys.exc_info()[:2])
-        pipe.send((None, False))
+        try:
+            pipe.send((None, False))
+        except (BrokenPipeError, OSError):
+            # 管道已断开，忽略错误
+            pass
     finally:
         env.close()
 
@@ -616,7 +624,11 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
     parent_pipe.close()
     try:
         while True:
-            command, data = pipe.recv()
+            try:
+                command, data = pipe.recv()
+            except (EOFError, BrokenPipeError, OSError):
+                # 管道已断开，退出循环
+                break
             if command == "reset":
                 observation = env.reset()
                 write_to_shared_memory(
@@ -663,6 +675,10 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
                 )
     except (KeyboardInterrupt, Exception):
         error_queue.put((index,) + sys.exc_info()[:2])
-        pipe.send((None, False))
+        try:
+            pipe.send((None, False))
+        except (BrokenPipeError, OSError):
+            # 管道已断开，忽略错误
+            pass
     finally:
         env.close()
