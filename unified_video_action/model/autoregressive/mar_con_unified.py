@@ -138,7 +138,7 @@ class MAR(nn.Module):
         diffloss_w=1024,
         diffloss_act_d=3,
         diffloss_act_w=1024,
-        num_sampling_steps="100",
+        num_sampling_steps=100,
         diffusion_batch_mul=4,
         grad_checkpointing=False,
         predict_video=True,

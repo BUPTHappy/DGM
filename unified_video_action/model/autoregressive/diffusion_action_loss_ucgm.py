@@ -110,7 +110,7 @@ class DiffActLossUCGM(nn.Module):
             raise NotImplementedError(f"Only MLP architecture is supported, got: {diff_model_type}")
         
         self.diff_model_type = diff_model_type
-        self.num_sampling_steps = num_sampling_steps
+        self.num_sampling_steps = int(num_sampling_steps)  # Ensure integer type
 
         print(f"DiffActLossUCGM: num_sampling_steps: {num_sampling_steps}"
               )
