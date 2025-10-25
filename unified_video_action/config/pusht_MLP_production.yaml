@@ -9,14 +9,14 @@ dataloader:
   batch_size: 32
   num_workers: 0
   persistent_workers: false
-  pin_memory: false
+  pin_memory: true
   shuffle: true
 
 val_dataloader:
   batch_size: 32
   num_workers: 0
   persistent_workers: false
-  pin_memory: false
+  pin_memory: true
   shuffle: false
 
 training:
@@ -83,10 +83,10 @@ save_folder: ./logs/time_logs/pusht_mlp_ucgm_few_steps_sample_4
 bayesian_optimization:
   enabled: true
   optimization_mode: "balanced"  # speed_priority, performance_priority, or balanced
-  start_epoch: 150  # 从75%位置开始（200*3/4=150），确保训练稳定性
+  start_epoch: 10  # 从75%位置开始（200*3/4=150），确保训练稳定性
   interval: 10      # 每10个epoch优化一次
-  max_trials: 15    # 中期优化用15个trials
-  final_trials: 20  # 最终优化用20个trials
+  max_trials: 10    # 中期优化用15个trials
+  final_trials: 15  # 最终优化用20个trials
   n_test: 5         # 正常优化用5个test
   final_n_test: 8   # 最终优化用8个test，更充分的评估
   device: cuda:0
