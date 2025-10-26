@@ -12,14 +12,10 @@ def apply_bayesian_params_to_checkpoint(input_checkpoint, output_checkpoint):
     将贝叶斯优化得到的参数应用到checkpoint
     """
     
-    # 从最新的贝叶斯优化结果加载最优参数
+    # 从贝叶斯优化结果加载最优参数（只保存有效的4个参数）
     best_params = {
-        "consistc_ratio": 0.8225843668899645,
-        "rfba_gap_end": 0.7784207803666989,
-        "temperature": 0.7776702082687635,
         "num_sampling_steps": 2,
-        "cfg": 1.1047060125032149,
-        "extrapol_ratio": 0.3251006307625289,
+        "stochasticity_rate": 0.8225843668899645,  # consistc_ratio
         "window_size": 12,
         "lambda_local": 0.13521376899022036,
     }
@@ -42,27 +38,33 @@ def apply_bayesian_params_to_checkpoint(input_checkpoint, output_checkpoint):
     print("\nApplying parameters to config...")
     
     with open_dict(cfg.model.policy.autoregressive_model_params):
-        # Create ucgmts_config if it doesn't exist
+        # Create ucgmts_config if it doesn't exist (exactly as eval_sim.py does)
         if "ucgmts_config" not in cfg.model.policy.autoregressive_model_params:
             cfg.model.policy.autoregressive_model_params.ucgmts_config = OmegaConf.create({})
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = "Linear"
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbs_eps = 0.0
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = 0.0
         
         # Apply UCGM settings
         cfg.model.policy.autoregressive_model_params.use_ucgm = True
         
-        # Apply main parameters
-        cfg.model.policy.autoregressive_model_params.num_sampling_steps = best_params['num_sampling_steps']
-        cfg.model.policy.autoregressive_model_params.cfg = best_params['cfg']
-        cfg.model.policy.autoregressive_model_params.temperature = best_params['temperature']
-        cfg.model.policy.autoregressive_model_params.window_size = best_params['window_size']
-        cfg.model.policy.autoregressive_model_params.lambda_local = best_params['lambda_local']
+        # Apply main parameters (exactly as eval_sim.py does)
+        if best_params['num_sampling_steps']:
+            cfg.model.policy.autoregressive_model_params.num_sampling_steps = best_params['num_sampling_steps']
+            if best_params['num_sampling_steps'] <= 2:
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5] 
+            else:
+                cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
         
-        # Apply ucgmts_config parameters
-        cfg.model.policy.autoregressive_model_params.ucgmts_config.transport_type = "Linear"
-        cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = best_params['consistc_ratio']
-        cfg.model.policy.autoregressive_model_params.ucgmts_config.scaled_cbl_eps = 0.0
-        cfg.model.policy.autoregressive_model_params.ucgmts_config.ema_decay_rate = 0.0
-        cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, best_params['rfba_gap_end']]
-        cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = best_params['extrapol_ratio']
+        # Apply local attention parameters
+        if best_params['window_size'] is not None:
+            cfg.model.policy.autoregressive_model_params.window_size = best_params['window_size']
+        if best_params['lambda_local'] is not None:
+            cfg.model.policy.autoregressive_model_params.lambda_local = best_params['lambda_local']
+        
+        # Apply stochasticity_rate (consistc_ratio)
+        if best_params['stochasticity_rate'] is not None:
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = best_params['stochasticity_rate']
     
     # Update checkpoint payload
     payload["cfg"] = cfg
@@ -76,17 +78,20 @@ def apply_bayesian_params_to_checkpoint(input_checkpoint, output_checkpoint):
     params = cfg.model.policy.autoregressive_model_params
     print(f"  use_ucgm: {params.use_ucgm}")
     print(f"  num_sampling_steps: {params.num_sampling_steps}")
-    print(f"  cfg: {params.cfg}")
-    print(f"  temperature: {params.temperature}")
     print(f"  window_size: {params.window_size}")
     print(f"  lambda_local: {params.lambda_local}")
     print(f"  ucgmts_config:")
     print(f"    consistc_ratio: {params.ucgmts_config.consistc_ratio}")
     print(f"    rfba_gap_steps: {params.ucgmts_config.rfba_gap_steps}")
-    print(f"    extrapol_ratio: {params.ucgmts_config.extrapol_ratio}")
     
     print(f"\n✓ Checkpoint saved to: {output_checkpoint}")
-    print("\nNow you can use this checkpoint for evaluation without command line arguments!")
+    print("\n现在你可以用这个checkpoint复现贝叶斯优化的0.9964结果了！")
+    print("\n使用方法：")
+    print(f"  python eval_sim.py \\")
+    print(f"    --checkpoint {output_checkpoint} \\")
+    print(f"    --output_dir results/ \\")
+    print(f"    --use_ucgm \\")
+    print(f"    --device cuda:0")
 
 if __name__ == "__main__":
     import sys
