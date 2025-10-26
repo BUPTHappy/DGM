@@ -1,27 +1,27 @@
 {
   "epoch": 170,
   "best_params": {
-    "consistc_ratio": 0.8408653042225432,
-    "rfba_gap_end": 0.14855219433125352,
-    "temperature": 0.9193614182133092,
-    "num_sampling_steps": 2,
-    "cfg": 1.1571491934919722,
-    "extrapol_ratio": 0.5618737753731681,
-    "window_size": 14,
-    "lambda_local": 0.6552770499579872,
+    "consistc_ratio": 0.608369997795883,
+    "rfba_gap_end": 0.4310342349051307,
+    "temperature": 0.7188550437459649,
+    "num_sampling_steps": 3,
+    "cfg": 1.2473109541728988,
+    "extrapol_ratio": 0.3531368424931322,
+    "window_size": 11,
+    "lambda_local": 0.10961618572507342,
     "ucgmts_config": {
       "transport_type": "Linear",
-      "consistc_ratio": 0.8408653042225432,
+      "consistc_ratio": 0.608369997795883,
       "scaled_cbl_eps": 0.0,
       "ema_decay_rate": 0.0,
       "rfba_gap_steps": [
         0.001,
-        0.14855219433125352
+        0.4310342349051307
       ],
-      "extrapol_ratio": 0.5618737753731681
+      "extrapol_ratio": 0.3531368424931322
     }
   },
-  "best_score": 0.9759926357694085,
-  "checkpoint_path": "/home/zhuliu/workspace/Towards-Generalizable-Embodied-AI-via-Diffusion-Based-Robotic-Policies/checkpoints/pusht_production_opt/checkpoints/latest.ckpt",
-  "timestamp": 1761041907.9428298
+  "best_score": 0.9877707533894522,
+  "checkpoint_path": "/home/zhuliu/workspace/Towards-Generalizable-Embodied-AI-via-Diffusion-Based-Robotic-Policies/checkpoints/pusht_adaptDiff_multi/checkpoints/latest.ckpt",
+  "timestamp": 1761419351.8491514
 }
