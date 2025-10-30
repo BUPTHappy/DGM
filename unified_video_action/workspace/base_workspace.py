@@ -85,9 +85,15 @@ class BaseWorkspace:
         if include_keys is None:
             include_keys = payload["pickles"].keys()
         
-        # Load cfg if it exists in payload
+        # Load cfg if it exists in payload, unless explicitly ignored by current cfg
+        # To force using the current (Hydra) cfg, set cfg.ignore_payload_cfg=true
         if "cfg" in payload:
-            self.cfg = payload["cfg"]
+            try:
+                ignore_payload_cfg = getattr(self.cfg, "ignore_payload_cfg", False)
+            except Exception:
+                ignore_payload_cfg = False
+            if not ignore_payload_cfg:
+                self.cfg = payload["cfg"]
 
         if (
             "lr_scheduler" not in self.__dict__
