@@ -38,25 +38,25 @@ policy:
     diffusion_batch_mul: 1
     grad_checkpointing: False
     use_ucgm: True
-    num_sampling_steps: 2  # 贝叶斯优化最优值 (score: 0.9964)
+    num_sampling_steps: 2
     ucgmts_config:
       transport_type: "Linear"
-      consistc_ratio: 0.8225843668899645  # 贝叶斯优化最优值
+      consistc_ratio: 1.0 
       scaled_cbl_eps: 0.0
       ema_decay_rate: 0.0
-      rfba_gap_steps: [0.001, 0.7784207803666989]  # 贝叶斯优化最优值
-      extrapol_ratio: 0.3251006307625289  # 贝叶斯优化最优值
+      rfba_gap_steps: [0.001, 0.5] 
+      extrapol_ratio: 0.0
     # Local attention parameters
-    window_size: 12  # 贝叶斯优化最优值
-    lambda_local: 0.13521376899022036  # 贝叶斯优化最优值
+    window_size: 12  
+    lambda_local: 0.1 
     token_pruning: False
     pruning_ratios: None
     restore_after_encoder: None
     #
     num_iter: 1
-    cfg: 1.1047060125032149  # 贝叶斯优化最优值
+    cfg: 1 
     cfg_schedule: "linear"
-    temperature: 0.7776702082687635  # 贝叶斯优化最优值
+    temperature: 0.95  
     predict_video: True
     #
     act_diff_training_steps: 1000
