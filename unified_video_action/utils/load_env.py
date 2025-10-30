@@ -6,7 +6,15 @@ from unified_video_action.env_runner.base_image_runner import BaseImageRunner
 
 def load_env_runner(cfg, output_dir):
     if "libero" in cfg.task.name:
-        hdf5_files = glob.glob(cfg.task.dataset.dataset_path + "/*hdf5")
+        # Search recursively to support datasets placed under one extra directory layer
+        base_dir = cfg.task.dataset.dataset_path
+        hdf5_files = glob.glob(base_dir + "/**/*.hdf5", recursive=True)
+        if len(hdf5_files) == 0:
+            raise FileNotFoundError(
+                f"No LIBERO .hdf5 files found under '{base_dir}'. "
+                "If your files are nested in a subdirectory, ensure the base path points to the parent, "
+                "or move files accordingly."
+            )
 
         env_runners = []
         for file in hdf5_files:

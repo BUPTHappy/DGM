@@ -32,6 +32,18 @@ from types import SimpleNamespace
     required=False,
     help="Override dataset path (directory containing LIBERO *.hdf5).",
 )
+@click.option(
+    "--no_ema",
+    is_flag=True,
+    help="Disable EMA policy and use raw model for evaluation.",
+)
+@click.option(
+    "--n_test",
+    type=int,
+    default=None,
+    show_default=True,
+    help="Override number of test rollouts per task in Libero.",
+)
 @click.option('--pruning_ratios_file', type=str, required=False, help='List of lists input in JSON format')
 @click.option(
     "--num_sampling_steps",
@@ -61,7 +73,7 @@ from types import SimpleNamespace
     show_default=True,
     help="Lambda parameter for local feature fusion."
 )
-def main(checkpoint, output_dir, device, dataset_path, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
+def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
 
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -141,6 +153,9 @@ def main(checkpoint, output_dir, device, dataset_path, pruning_ratios_file, use_
         print("Re-copied encoder parameters to local causal encoder blocks")
 
     # get policy from workspace
+    if no_ema:
+        with open_dict(cfg):
+            cfg.training.use_ema = False
     if cfg.training.use_ema:
         print("Using EMA policy for evaluation.")
         policy = workspace.ema_model
@@ -151,7 +166,7 @@ def main(checkpoint, output_dir, device, dataset_path, pruning_ratios_file, use_
     policy.eval()
     
     if "libero" in cfg.task.name:
-        cfg.task.env_runner.n_test = 10
+        cfg.task.env_runner.n_test = 10 if n_test is None else int(n_test)
         # allow overriding dataset path for evaluation
         if dataset_path is not None and len(dataset_path) > 0:
             with open_dict(cfg):
