@@ -26,6 +26,12 @@ from types import SimpleNamespace
 @click.option("-o", "--output_dir", required=True)
 @click.option("--use_ucgm", is_flag=True, help="Enable UCGM mode.")
 @click.option("-d", "--device", default="cuda:0")
+@click.option(
+    "--dataset_path",
+    type=str,
+    required=False,
+    help="Override dataset path (directory containing LIBERO *.hdf5).",
+)
 @click.option('--pruning_ratios_file', type=str, required=False, help='List of lists input in JSON format')
 @click.option(
     "--num_sampling_steps",
@@ -55,7 +61,7 @@ from types import SimpleNamespace
     show_default=True,
     help="Lambda parameter for local feature fusion."
 )
-def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
+def main(checkpoint, output_dir, device, dataset_path, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
 
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -146,6 +152,14 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_samp
     
     if "libero" in cfg.task.name:
         cfg.task.env_runner.n_test = 10
+        # allow overriding dataset path for evaluation
+        if dataset_path is not None and len(dataset_path) > 0:
+            with open_dict(cfg):
+                if "dataset" in cfg.task and "dataset_path" in cfg.task.dataset:
+                    cfg.task.dataset.dataset_path = dataset_path
+                if "env_runner" in cfg.task and "dataset_path" in cfg.task.env_runner:
+                    cfg.task.env_runner.dataset_path = dataset_path
+            print(f"Using dataset_path override: {cfg.task.env_runner.dataset_path}")
     else:
         cfg.task.env_runner.n_test = 50
         
@@ -162,7 +176,12 @@ def main(checkpoint, output_dir, device, pruning_ratios_file, use_ucgm, num_samp
         all_test_mean_score = {
             k: v for k, v in step_log.items() if "test/" in k and "_mean_score" in k
         }
-        step_log["test_mean_score"] = np.mean(list(all_test_mean_score.values()))
+        if len(all_test_mean_score) == 0:
+            print("Warning: No test mean score keys found. Check dataset_path and tasks.\n"
+                  f"dataset_path={getattr(cfg.task.env_runner, 'dataset_path', 'N/A')}")
+            step_log["test_mean_score"] = float("nan")
+        else:
+            step_log["test_mean_score"] = np.mean(list(all_test_mean_score.values()))
 
         runner_log = step_log
     else:
