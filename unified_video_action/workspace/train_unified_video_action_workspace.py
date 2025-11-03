@@ -759,7 +759,7 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     elif hasattr(model, 'model') and hasattr(model.model, 'autoregressive_model_params'):
                         autoregressive_params = model.model.autoregressive_model_params
                     else:
-                        print("❌ Cannot find autoregressive_model_params")
+                        print(" Cannot find autoregressive_model_params")
                         return False
                     
                     autoregressive_params.use_ucgm = True

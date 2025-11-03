@@ -1,0 +1,181 @@
+Algorithm: Dynamic Generative Modeling Optimization (DGMO)
+================================================================
+
+输入:
+- 数据集 D
+- 神经网络模型 F_θ (参数为θ)
+- 超参数集合 x = {λ, n, T, cfg, κ, gap, window_size, lambda_local}
+  * λ: 一致性比率 (consistency ratio)
+  * n: 采样步数 (num_sampling_steps)
+  * T: 温度 (temperature)
+  * cfg: Classifier-free guidance权重
+  * κ: 外推比率 (extrapolation ratio)
+  * gap: RFBA gap参数
+  * window_size: 局部注意力窗口大小
+  * lambda_local: 局部注意力权重
+- 优化模式 M (Speed/Balanced/Performance)
+- 训练轮数 E
+- Bayesian优化起始轮数 E_s
+- Bayesian优化间隔 ΔE
+- 最大优化试验次数 K
+
+输出:
+- 训练好的模型 F_θ
+- 优化后的超参数 x*
+
+初始化:
+- 设置初始超参数 x* = x
+- 设置最佳得分 s* = -∞
+
+================================================================
+主训练循环:
+================================================================
+
+for epoch e = 1 to E:
+    
+    ---------------- 阶段1: 模型参数优化 (θ) ----------------
+    对每个batch (x, z):
+        1. 采样:
+           - 数据样本 x ~ D
+           - 噪声 z ~ N(0, I)
+           - 时间步 t ~ Beta(θ1, θ2), 并clamp到[0,1]
+        
+        2. 计算noisy sample:
+           x_t = α(t) * z + γ(t) * x
+           其中: α(t) = t, γ(t) = 1-t (线性transport)
+        
+        3. 前向传播:
+           F_t = F_θ(x_t, h, t)
+        
+        4. 计算目标 (根据一致性比率λ):
+           
+           // 默认target: target = z*α̂(t) + x*γ̂(t) (当λ=0时不进入一致性计算)
+           
+           if λ != 0.0:
+               // 定义xfunc函数计算f^x
+               xfunc(r) = (F_θ-(x_r, r) * α(r) - x_r * α̂(r)) / den_r
+               其中 x_r = α(r)*z + γ(r)*x, den_r = α(r)*γ̂(r) - α̂(r)*γ(r)
+               
+               if λ == 1.0:
+                   // 使用有限差分
+                   ε = 0.005
+                   Δf^x_t = [xfunc(t+ε) - xfunc(t-ε)] / (2ε)
+               else:
+                   // λ ∈ (0, 1): 使用t和λt两个时间点
+                   ε = t - λ*t
+                   // 先计算当前时间的predict_ex
+                   predict_ex = (F_t * α(t) - x_t * α̂(t)) / den_t
+                   // 计算导数
+                   Δf^x_t = predict_ex / ε - xfunc(t-ε) / ε
+               
+               // Clamp并计算目标
+               Δf^x_t = clip(Δf^x_t, -1, 1)
+               weight_fc = 4 / sin(t * π/2)  // 注意: 代码中使用 t*1.57 (≈π/2)
+               F_t_target = sg(F_t) - (α(t) / den_t * weight_fc) * Δf^x_t
+           其中 den_t = α(t)*γ̂(t) - α̂(t)*γ(t)
+           
+           // 如果λ=0，直接使用默认target，不进行上述计算
+        
+        5. 计算损失:
+           // loss_func计算:
+           // L_base = sqrt(||F_t - F_t_target||² + huc²) - huc  // smooth L1 loss
+           // 如果wt_cosine_loss=True，则加上: + mean(1 - cosine_similarity(F_t, F_t_target))
+           L_t(θ) = loss_func(F_t, F_t_target)
+           
+           // 如果使用weight function "Cosine":
+           if weight_function == "Cosine":
+               L_t(θ) = L_t(θ) * cos(t * π/2)
+        
+        6. 更新模型参数:
+           θ = θ - η * ∇_θ L_t(θ)
+    
+    ---------------- 阶段2: 超参数优化 (x) ----------------
+    
+    if epoch e >= E_s and (e - E_s) mod ΔE == 0:
+        
+        // 初始化Optuna study (使用TPE采样器)
+        study = Optuna.create_study(direction='maximize', sampler='TPE')
+        
+        for trial k = 1 to K:
+            
+            // 根据优化模式M定义搜索空间
+            if M == "Speed":
+                λ范围: [0.75, 1.0]
+                n选项: [1, 2]
+                T范围: [0.7, 1.0]
+                cfg范围: [0.8, 1.2]
+                κ范围: [0.0, 0.3]
+                gap范围: [0.3, 0.8]
+                window_size范围: [0, 10]
+                lambda_local范围: [0.01, 0.5]
+                
+            else if M == "Performance":
+                λ范围: [0.5, 0.9]
+                n选项: [1, 2, ..., 15]
+                T范围: [0.7, 1.3]
+                cfg范围: [0.8, 1.5]
+                κ范围: [0.0, 0.8]
+                gap范围: [0.1, 0.5]
+                window_size范围: [0, 20]
+                lambda_local范围: [0.01, 1.0]
+                
+            else: // Balanced
+                λ范围: [0.7, 1.0]
+                n选项: [1, 2, 3]
+                T范围: [0.7, 1.2]
+                cfg范围: [0.8, 1.5]
+                κ范围: [0.0, 0.6]
+                gap范围: [0.2, 0.7]
+                window_size范围: [0, 15]
+                lambda_local范围: [0.01, 0.8]
+            
+            // 从搜索空间采样超参数 (使用Optuna的采样方法)
+            x_k = {
+                λ_k ~ Uniform(λ_min, λ_max),           // suggest_float
+                n_k ~ Categorical({1, 2, ...}),       // suggest_categorical
+                T_k ~ Uniform(T_min, T_max),         // suggest_float
+                cfg_k ~ Uniform(cfg_min, cfg_max),   // suggest_float
+                κ_k ~ Uniform(κ_min, κ_max),         // suggest_float
+                gap_k ~ Uniform(gap_min, gap_max),   // suggest_float
+                window_size_k ~ Integer(window_min, window_max),  // suggest_int
+                lambda_local_k ~ Uniform(lambda_min, lambda_max) // suggest_float
+            }
+            
+            // 配置模型使用新超参数
+            F_θ的UCGM配置.consistc_ratio = λ_k
+            F_θ的采样配置.num_sampling_steps = n_k
+            F_θ的采样配置.temperature = T_k
+            F_θ的采样配置.cfg = cfg_k
+            F_θ的UCGM配置.rfba_gap_steps = [0.001, gap_k]
+            F_θ的UCGM配置.extrapol_ratio = κ_k
+            注意力的window_size = window_size_k
+            注意力的lambda_local = lambda_local_k
+            
+            // 在验证集上评估模型性能
+            s_k = EvaluateModel(F_θ, x_k, D_val)
+            // 返回任务性能得分 (例如成功率、成功率等)
+            
+            // 更新最佳超参数
+            if s_k > s*:
+                x* = x_k
+                s* = s_k
+        
+        // 将最佳超参数应用到模型配置
+        x = x*
+        更新F_θ的所有相关配置参数
+        
+end for
+
+================================================================
+返回:
+- 训练好的模型 F_θ
+- 优化后的超参数 x*
+================================================================
+
+说明:
+1. 交叉优化: 模型参数θ和超参数x在训练过程中交替优化
+2. 模型参数: 每个batch都更新
+3. 超参数: 每ΔE个epoch更新一次 (从第E_s个epoch开始)
+4. UCGM训练: 使用一致性比率λ统一diffusion和consistency模型
+5. Bayesian优化: 使用Optuna TPE高效搜索高维超参数空间
+

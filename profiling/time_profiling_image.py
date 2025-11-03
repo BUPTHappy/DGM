@@ -126,9 +126,26 @@ def main(cfg: DictConfig):
 
         orig_sample_tokens = None
         orig_diff_sample = None
+        orig_vae_encode = None
 
         sample_tokens_times = []  # per-iteration, we reset and append per-call ms
         diff_sample_times = []    # per-iteration, we reset and append per-call ms
+        vae_encode_times = []     # per-iteration, we reset and append per-call ms
+
+        # Patch VAE encoder
+        if hasattr(model, 'vae_model'):
+            from unified_video_action.utils.data_utils import extract_latent_autoregressive
+            import unified_video_action.utils.data_utils as data_utils
+            orig_vae_encode = data_utils.extract_latent_autoregressive
+            
+            def timed_vae_encode(vae_model, x):
+                with cuda_event_timer() as evs:
+                    out = orig_vae_encode(vae_model, x)
+                    s, e = evs()
+                vae_encode_times.append(s.elapsed_time(e))
+                return out
+            
+            data_utils.extract_latent_autoregressive = timed_vae_encode
 
         if sample_owner is None:
             print("[WARN] Could not find sample_tokens; split timing limited to total only.")
@@ -166,11 +183,13 @@ def main(cfg: DictConfig):
         diff_times_per_iter = []
         tokens_other_times = []
         pre_tokens_times = []
+        vae_encode_times_per_iter = []
 
         for _ in range(NUM_ITERS):
             # reset per-iter buckets
             del sample_tokens_times[:]
             del diff_sample_times[:]
+            del vae_encode_times[:]
 
             torch.cuda.synchronize()
             s = torch.cuda.Event(enable_timing=True)
@@ -185,11 +204,13 @@ def main(cfg: DictConfig):
 
             st_ms = float(sum(sample_tokens_times)) if sample_tokens_times else 0.0
             df_ms = float(sum(diff_sample_times)) if diff_sample_times else 0.0
+            vae_ms = float(sum(vae_encode_times)) if vae_encode_times else 0.0
 
             tokens_times_per_iter.append(st_ms)
             diff_times_per_iter.append(df_ms)
+            vae_encode_times_per_iter.append(vae_ms)
 
-            pre_ms = max(0.0, total_ms - st_ms)
+            pre_ms = max(0.0, total_ms - st_ms - vae_ms)
             other_ms = max(0.0, st_ms - df_ms)
 
             pre_tokens_times.append(pre_ms)
@@ -201,21 +222,39 @@ def main(cfg: DictConfig):
         avg_diff   = sum(diff_times_per_iter) / len(diff_times_per_iter)
         avg_tokens_other = sum(tokens_other_times) / len(tokens_other_times)
         avg_pre    = sum(pre_tokens_times) / len(pre_tokens_times)
+        avg_vae    = sum(vae_encode_times_per_iter) / len(vae_encode_times_per_iter) if vae_encode_times_per_iter else 0.0
+        avg_transformer = avg_tokens_other  # Transformer time is the "other" part inside sample_tokens
 
         # ---------- Restore originals ----------
         if sample_owner is not None and orig_sample_tokens is not None:
             setattr(sample_owner, sample_attr, orig_sample_tokens)
         if diff_owner is not None and orig_diff_sample is not None:
             setattr(diff_owner, diff_attr, orig_diff_sample)
+        if orig_vae_encode is not None:
+            import unified_video_action.utils.data_utils as data_utils
+            data_utils.extract_latent_autoregressive = orig_vae_encode
 
         # ---------- Write log ----------
         with open(LOG_PATH, "w") as f:
             f.write(f"Command: {' '.join(sys.argv)}\n")
+            f.write(f"\n=== Component-wise Timing (over {NUM_ITERS} iterations) ===\n\n")
+            f.write(f"Total predict_action         : {avg_total:.3f} ms\n\n")
+            f.write(f"Breakdown:\n")
+            if avg_vae > 0:
+                f.write(f"  VAE Image Encoder         : {avg_vae:.3f} ms\n")
+            f.write(f"  Transformer               : {avg_transformer:.3f} ms\n")
+            if diff_owner is not None and orig_diff_sample is not None:
+                f.write(f"  Action Diffusion          : {avg_diff:.3f} ms\n")
+            if avg_pre > 0:
+                f.write(f"  Other preprocessing       : {avg_pre:.3f} ms\n")
+            f.write(f"\n=== Detailed Breakdown ===\n\n")
             f.write(f"Avg full predict_action      : {avg_total:.3f} ms over {NUM_ITERS} iters\n")
             f.write(f"Avg sample_tokens (total)    : {avg_tokens:.3f} ms\n")
             if diff_owner is not None and orig_diff_sample is not None:
                 f.write(f"  ├─ Avg diffactloss.sample  : {avg_diff:.3f} ms\n")
                 f.write(f"  └─ Avg other inside tokens : {avg_tokens_other:.3f} ms\n")
+            if avg_vae > 0:
+                f.write(f"Avg VAE encoder             : {avg_vae:.3f} ms\n")
             f.write(f"Avg pre-sample_tokens        : {avg_pre:.3f} ms\n")
 
         print(f"[✓] Timing log written to {LOG_PATH}")

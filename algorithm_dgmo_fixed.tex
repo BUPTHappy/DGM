@@ -1,0 +1,36 @@
+\begin{algorithm}[t]
+\caption{Dynamic Generative Modeling Optimization (DGMO)}
+\label{alg:dgmo}
+\KwIn{Dataset \(\mathcal{D}\), model \(F_\theta\), hyperparameters \(\mathbf{x} = \{\lambda, n, T, \text{cfg}, \kappa, \ldots\}\), mode \(\mathcal{M}\), epochs \(E\), BO start \(E_s\), interval \(\Delta E\)}
+\KwOut{Trained \(F_\theta\) and optimized \(\mathbf{x}^*\)}
+
+Initialize \(\mathbf{x}^* \leftarrow \mathbf{x}\), \(s^* \leftarrow -\infty\)\;
+
+\For{epoch \(e = 1\) to \(E\)}{
+    \textbf{Phase 1: Optimize Model Parameters \(\theta\)}\;
+    
+    \For{each batch \((x,z) \sim \mathcal{D}\)}{
+        Sample \(t \sim \text{Beta}(\theta_1, \theta_2)\); compute \(x_t = \alpha(t)z + \gamma(t)x\), \(F_t = F_\theta(x_t, h, t)\)\;
+        
+        \eIf{\(\lambda \neq 0.0\)}{
+            Compute \(\Delta f^x_t\): if \(\lambda = 1.0\) use finite difference at \(t \pm \epsilon\), else use consistency between \(t\) and \(\lambda t\)\;
+            \(F_t^{\text{target}} = \text{sg}(F_t) - \frac{\alpha(t)}{\text{den}_t} \cdot \frac{4}{\sin(t\pi/2)} \cdot \text{clip}(\Delta f^x_t, -1, 1)\)\;
+        }{
+            \(F_t^{\text{target}} = z \cdot \hat{\alpha}(t) + x \cdot \hat{\gamma}(t)\)\;
+        }
+        
+        \(\mathcal{L}_t = \text{loss\_func}(F_t, F_t^{\text{target}})\); \(\theta \leftarrow \theta - \eta\nabla_\theta\mathcal{L}_t\)\;
+    }
+    
+    \textbf{Phase 2: Optimize Hyperparameters \(\mathbf{x}\)}\;
+    \If{\(e \geq E_s\) and \((e-E_s) \bmod \Delta E = 0\)}{
+        \For{trial \(k=1\) to \(K\)}{
+            Sample \(\mathbf{x}_k\) from \(\mathcal{A}(\mathcal{M})\); evaluate \(s_k = f(F_\theta, \mathbf{x}_k, \mathcal{D}_{\text{val}})\)\;
+            \If{\(s_k > s^*\)}{\(\mathbf{x}^* \leftarrow \mathbf{x}_k\); \(s^* \leftarrow s_k\)\;}
+        }
+        \(\mathbf{x} \leftarrow \mathbf{x}^*\)\;
+    }
+}
+\Return{\(F_\theta\) and \(\mathbf{x}^*\)}
+\end{algorithm}
+
