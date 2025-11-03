@@ -126,8 +126,14 @@ class TrainingBayesianOptimizer:
             # Set test count
             if "libero" in cfg.task.name:
                 cfg.task.env_runner.n_test = self.n_test
+                # For libero10, each task needs more time (10 tasks * n_test * max_steps)
+                # Estimate: ~30-60 seconds per test per task depending on complexity
+                # Calculate timeout with buffer: at least 20 minutes, scale with n_test
+                # Formula: base_time (20 min) + n_test * tasks * time_per_test
+                timeout = max(1200, self.n_test * 60 * 10)  # At least 20 minutes, scale with n_test
             else:
                 cfg.task.env_runner.n_test = min(self.n_test * 5, 50)
+                timeout = 300  # 5 minutes for other tasks
             
             # Create temp output directory
             temp_output_dir = tempfile.mkdtemp(prefix="current_eval_")
@@ -144,12 +150,13 @@ class TrainingBayesianOptimizer:
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = self.device.split(":")[-1] if ":" in self.device else "0"
             
+            print(f"Running evaluation with timeout: {timeout} seconds")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 env=env,
-                timeout=180
+                timeout=timeout
             )
             
             if result.returncode != 0:
@@ -189,7 +196,8 @@ class TrainingBayesianOptimizer:
             return float(score)
             
         except subprocess.TimeoutExpired:
-            print("Current checkpoint evaluation timeout")
+            print(f"Current checkpoint evaluation timeout after {timeout} seconds")
+            print(f"Evaluation may need more time. Consider increasing timeout or reducing n_test.")
             torch.cuda.empty_cache()
             return -1000.0
         except RuntimeError as e:
@@ -302,8 +310,14 @@ class TrainingBayesianOptimizer:
             # Set test count
             if "libero" in cfg.task.name:
                 cfg.task.env_runner.n_test = self.n_test
+                # For libero10, each task needs more time (10 tasks * n_test * max_steps)
+                # Estimate: ~30-60 seconds per test per task depending on complexity
+                # Calculate timeout with buffer: at least 20 minutes, scale with n_test
+                # Formula: base_time (20 min) + n_test * tasks * time_per_test
+                timeout = max(1200, self.n_test * 60 * 10)  # At least 20 minutes, scale with n_test
             else:
                 cfg.task.env_runner.n_test = min(self.n_test * 5, 50)
+                timeout = 300  # 5 minutes for other tasks
             
             # Create temp output directory
             temp_output_dir = tempfile.mkdtemp(prefix="bayesian_eval_")
@@ -324,12 +338,13 @@ class TrainingBayesianOptimizer:
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = self.device.split(":")[-1] if ":" in self.device else "0"
             
+            print(f"Running evaluation with timeout: {timeout} seconds")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
                 env=env,
-                timeout=180  # Reduced timeout for training integration
+                timeout=timeout
             )
             
             if result.returncode != 0:
@@ -369,7 +384,8 @@ class TrainingBayesianOptimizer:
             return float(score)
             
         except subprocess.TimeoutExpired:
-            print("Evaluation timeout")
+            print(f"Evaluation timeout after {timeout} seconds")
+            print(f"Evaluation may need more time. Consider increasing timeout or reducing n_test.")
             torch.cuda.empty_cache()
             return -1000.0
         except RuntimeError as e:
