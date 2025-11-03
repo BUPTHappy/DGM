@@ -246,6 +246,14 @@ class LiberoImageRunner(BaseImageRunner):
             env_prefixs.append("test/%s_" % env_meta["bddl_file"].split("/")[-1][:-5])
             env_init_fn_dills.append(dill.dumps(init_fn))
 
+        # CRITICAL: Ensure CUDA is synchronized before forking processes
+        # AsyncVectorEnv will fork worker processes, and CUDA contexts don't work well with fork
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        
         env = AsyncVectorEnv(env_fns, dummy_env_fn=dummy_env_fn, shared_memory=False)
 
         self.env_meta = env_meta

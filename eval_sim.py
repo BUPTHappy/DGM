@@ -175,15 +175,21 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
     else:
         policy = workspace.model
         print("Using regular policy for evaluation.")
-    print(f"[eval_sim] Moving policy to device {device}...")
-    policy.to(device)
+    
+    # CRITICAL: Do NOT move policy to CUDA before forking!
+    # CUDA contexts don't work with fork() - if we have CUDA tensors when forking,
+    # the child processes will have invalid CUDA contexts, causing nvidia-smi to hang
+    # and the entire system to become unresponsive.
+    # Strategy: Keep policy on CPU, create all environments (which fork), THEN move to CUDA
     policy.eval()
     
-    # Clear CUDA cache before creating environments to avoid fork issues
+    # Ensure we're not holding any CUDA context
     if "cuda" in device:
+        # Release any existing CUDA context
         torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-        print(f"[eval_sim] CUDA cache cleared before creating environments")
+        if torch.cuda.is_initialized():
+            torch.cuda.synchronize()
+        print(f"[eval_sim] Policy kept on CPU to avoid CUDA context issues during fork")
     
     if "libero" in cfg.task.name:
         cfg.task.env_runner.n_test = 10 if n_test is None else int(n_test)
@@ -201,6 +207,8 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
     print(f"[eval_sim] Loading environment runners...")
     env_runner_start = time.time()
     try:
+        # CRITICAL: Create environments BEFORE moving policy to CUDA
+        # This avoids CUDA context issues when AsyncVectorEnv forks processes
         env_runners = load_env_runner(cfg, output_dir)
         print(f"[eval_sim] Environment runners loaded in {time.time() - env_runner_start:.2f} seconds")
         print(f"[eval_sim] Number of env runners: {len(env_runners) if isinstance(env_runners, list) else 1}")
@@ -209,6 +217,17 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
         import traceback
         traceback.print_exc()
         raise
+    
+    # NOW move policy to CUDA after all forks are complete
+    print(f"[eval_sim] Moving policy to device {device} (after env creation)...")
+    if "cuda" in device:
+        # Ensure CUDA is ready
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+    policy.to(device)
+    if "cuda" in device:
+        torch.cuda.synchronize()
+        print(f"[eval_sim] Policy moved to CUDA and synchronized")
 
     if "libero" in cfg.task.name:
         step_log = {}
