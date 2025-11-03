@@ -48,7 +48,14 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
         super().__init__()
 
         self.task_name = task_name
-        self.task_modes = task_modes
+        # Ensure task_modes is always a list
+        if task_modes is None:
+            self.task_modes = []
+        elif not isinstance(task_modes, (list, tuple)):
+            # If it's not a list/tuple (e.g., an int), treat as empty
+            self.task_modes = []
+        else:
+            self.task_modes = list(task_modes)
         self.autoregressive_model_params = autoregressive_model_params
         self.n_action_steps = n_action_steps
         self.shift_action = shift_action
