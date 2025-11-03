@@ -150,6 +150,8 @@ class TrainingBayesianOptimizer:
             
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = self.device.split(":")[-1] if ":" in self.device else "0"
+            # CRITICAL: Disable tokenizers parallelism to avoid deadlock when forking processes
+            env["TOKENIZERS_PARALLELISM"] = "false"
             
             print(f"Running evaluation with timeout: {timeout} seconds")
             print(f"Command: {' '.join(cmd)}")
@@ -357,6 +359,8 @@ class TrainingBayesianOptimizer:
             
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = self.device.split(":")[-1] if ":" in self.device else "0"
+            # CRITICAL: Disable tokenizers parallelism to avoid deadlock when forking processes
+            env["TOKENIZERS_PARALLELISM"] = "false"
             
             print(f"Running evaluation with timeout: {timeout} seconds")
             print(f"Command: {' '.join(cmd)}")

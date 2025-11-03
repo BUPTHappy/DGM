@@ -1,4 +1,8 @@
 import os
+# CRITICAL: Set TOKENIZERS_PARALLELISM before any imports that might use tokenizers
+# This must be set before AsyncVectorEnv forks processes to avoid deadlocks
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import sys
 import wandb
 import numpy as np

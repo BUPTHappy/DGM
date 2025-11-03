@@ -1,9 +1,13 @@
 import sys
+import os
+
+# CRITICAL: Set TOKENIZERS_PARALLELISM before any imports that might use tokenizers
+# This must be set before forking processes (AsyncVectorEnv) to avoid deadlocks
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 sys.stdout = open(sys.stdout.fileno(), mode="w", buffering=1)
 sys.stderr = open(sys.stderr.fileno(), mode="w", buffering=1)
 import numpy as np
-import os
 import pathlib
 import click
 import hydra
