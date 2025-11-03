@@ -101,6 +101,13 @@ def _main_impl(cfg: DictConfig):
     cfg.save_folder = LOG_PATH
 
     # cfg tweaks (copied from your script)
+    # Force predict_action=True for profiling (even if config says False)
+    # This ensures diffactloss is initialized
+    with open_dict(cfg):
+        if not cfg.model.policy.action_model_params.predict_action:
+            print("[INFO] Force setting action_model_params.predict_action=True for profiling")
+            cfg.model.policy.action_model_params.predict_action = True
+    
     OmegaConf.resolve(cfg)
     if cfg.model.policy.action_model_params.predict_action is False:
         cfg.checkpoint.topk.monitor_key = "video_fvd"
@@ -126,6 +133,17 @@ def _main_impl(cfg: DictConfig):
             language_emb_model=language_emb_model,
         ).to(DEVICE).eval()
         
+        # Force predict_action=True for profiling (even if config says False)
+        # This is necessary because we need to measure action prediction time
+        if hasattr(model, 'model'):
+            if hasattr(model.model, 'predict_action') and not model.model.predict_action:
+                print(f"[INFO] Force setting predict_action=True for profiling (was False)")
+                model.model.predict_action = True
+            # Ensure predict_video is also True (needed for sample_tokens to work)
+            if hasattr(model.model, 'predict_video') and not model.model.predict_video:
+                print(f"[INFO] Force setting predict_video=True for profiling (was False)")
+                model.model.predict_video = True
+        
         # Verify model components are initialized
         if hasattr(model, 'model'):
             print(f"[INFO] Model predict_action: {getattr(model.model, 'predict_action', 'NOT SET')}")
@@ -133,9 +151,7 @@ def _main_impl(cfg: DictConfig):
             if hasattr(model.model, 'diffactloss'):
                 print(f"[INFO] DiffActLoss found: {type(model.model.diffactloss)}")
             else:
-                print("[WARN] DiffActLoss not found in model!")
-                if hasattr(model.model, '__dict__'):
-                    print(f"[INFO] Available attributes: {list(model.model.__dict__.keys())[:10]}...")
+                print("[WARN] DiffActLoss not found - this may cause errors if predict_action=True")
 
         # ---------- Dummy normalizer (identity) ----------
         from unified_video_action.model.common.normalizer import (
