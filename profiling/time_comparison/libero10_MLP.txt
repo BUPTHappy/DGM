@@ -1,0 +1,18 @@
+Command: profiling/time_profiling_image.py --config-dir=. --config-name=libero10_MLP_production.yaml model.policy.selected_training_mode=policy_model save_folder=profiling/time_comparison/libero10_MLP.txt
+
+=== Component-wise Timing (over 100 iterations) ===
+
+Total predict_action         : 58.721 ms
+
+Breakdown:
+  Transformer               : 42.280 ms
+  Action Diffusion          : 3.154 ms
+  Other preprocessing       : 13.287 ms
+
+=== Detailed Breakdown ===
+
+Avg full predict_action      : 58.721 ms over 100 iters
+Avg sample_tokens (total)    : 45.434 ms
+  ├─ Avg diffactloss.sample  : 3.154 ms
+  └─ Avg other inside tokens : 42.280 ms
+Avg pre-sample_tokens        : 13.287 ms

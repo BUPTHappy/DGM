@@ -1,0 +1,18 @@
+Command: profiling/time_profiling_image.py --config-dir=. --config-name=pusht_MLP_production.yaml model.policy.selected_training_mode=policy_model save_folder=profiling/time_comparison/pusht_MLP.txt
+
+=== Component-wise Timing (over 100 iterations) ===
+
+Total predict_action         : 53.720 ms
+
+Breakdown:
+  Transformer               : 41.123 ms
+  Action Diffusion          : 3.297 ms
+  Other preprocessing       : 9.300 ms
+
+=== Detailed Breakdown ===
+
+Avg full predict_action      : 53.720 ms over 100 iters
+Avg sample_tokens (total)    : 44.420 ms
+  ├─ Avg diffactloss.sample  : 3.297 ms
+  └─ Avg other inside tokens : 41.123 ms
+Avg pre-sample_tokens        : 9.300 ms
