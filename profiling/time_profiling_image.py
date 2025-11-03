@@ -141,6 +141,7 @@ def _main_impl(cfg: DictConfig):
         shape_meta = cfg.task.shape_meta
         image_keys = []
         image_resolution = shape_meta.get("image_resolution", 128)
+        task_name = cfg.task.name
         
         # Find all RGB image observation keys
         if "obs" in shape_meta:
@@ -149,7 +150,6 @@ def _main_impl(cfg: DictConfig):
                     image_keys.append(key)
         
         # Fallback: try common keys based on task name
-        task_name = cfg.task.name
         if not image_keys:
             if "libero" in task_name:
                 image_keys = ["agentview_image"]
@@ -160,12 +160,37 @@ def _main_impl(cfg: DictConfig):
             else:
                 image_keys = ["image"]  # default fallback
         
-        # Create obs_dict with the correct key(s)
-        obs_dict = {}
+        # Map shape_meta keys to what resize_image_eval expects
+        # resize_image_eval expects specific key names and will convert them to "image"
+        key_mapping = {}
         for key in image_keys:
+            # For libero: agentview_rgb -> agentview_image (what resize_image_eval expects)
+            if "libero" in task_name and key == "agentview_rgb":
+                mapped_key = "agentview_image"
+            # For umi: camera0_rgb -> camera0_rgb (already correct)
+            elif "umi" in task_name and key == "camera0_rgb":
+                mapped_key = "camera0_rgb"
+            # For pusht: image -> image (already correct)
+            elif "pusht" in task_name and key == "image":
+                mapped_key = "image"
+            # For toolhang: sideview_image, robot0_eye_in_hand_image
+            elif "toolhang" in task_name:
+                if key == "sideview_image":
+                    mapped_key = "sideview_image"
+                elif "eye_in_hand" in key or "wrist" in key:
+                    mapped_key = "robot0_eye_in_hand_image"
+                else:
+                    mapped_key = key
+            else:
+                mapped_key = key
+            key_mapping[key] = mapped_key
+        
+        # Create obs_dict with the correct key(s) that resize_image_eval expects
+        obs_dict = {}
+        for original_key, mapped_key in key_mapping.items():
             # Get image shape from shape_meta or use default
-            if key in shape_meta.get("obs", {}):
-                obs_shape = shape_meta["obs"][key]["shape"]
+            if original_key in shape_meta.get("obs", {}):
+                obs_shape = shape_meta["obs"][original_key]["shape"]
                 if isinstance(obs_shape, list) and len(obs_shape) >= 2:
                     C, H, W = obs_shape[0], obs_shape[1], obs_shape[2] if len(obs_shape) > 2 else obs_shape[1]
                 else:
@@ -173,9 +198,9 @@ def _main_impl(cfg: DictConfig):
             else:
                 C, H, W = 3, image_resolution, image_resolution
             
-            obs_dict[key] = torch.randn(BATCH_SIZE, 16, C, H, W, device=DEVICE, dtype=torch.float32)
+            obs_dict[mapped_key] = torch.randn(BATCH_SIZE, 16, C, H, W, device=DEVICE, dtype=torch.float32)
         
-        print(f"[INFO] Using image observation keys: {image_keys}")
+        print(f"[INFO] Using image observation keys: {list(key_mapping.values())} (mapped from {list(key_mapping.keys())})")
         print(f"[INFO] Image resolution: {image_resolution}, Shape: (B={BATCH_SIZE}, T=16, C={C}, H={H}, W={W})")
         
         # Language goal (only if task uses language)
