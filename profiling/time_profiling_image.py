@@ -109,12 +109,54 @@ def main(cfg: DictConfig):
         model.set_normalizer(dummy_norm)
 
         # ---------- Dummy inputs ----------
-        LANG = "KITCHEN SCENE6 put the yellow and white mug in the microwave and close it"
-        obs_dict = {
-            # shape: (B, T, C, H, W)
-            "agentview_image": torch.randn(BATCH_SIZE, 16, 3, 128, 128, device=DEVICE, dtype=torch.float32),
-        }
-        language_goal = [LANG] * BATCH_SIZE  # length BATCH_SIZE
+        # Dynamically determine the correct image observation key from shape_meta
+        shape_meta = cfg.task.shape_meta
+        image_keys = []
+        image_resolution = shape_meta.get("image_resolution", 128)
+        
+        # Find all RGB image observation keys
+        if "obs" in shape_meta:
+            for key, obs_spec in shape_meta["obs"].items():
+                if obs_spec.get("type") == "rgb":
+                    image_keys.append(key)
+        
+        # Fallback: try common keys based on task name
+        task_name = cfg.task.name
+        if not image_keys:
+            if "libero" in task_name:
+                image_keys = ["agentview_image"]
+            elif "pusht" in task_name:
+                image_keys = ["image"]
+            elif "umi" in task_name:
+                image_keys = ["camera0_rgb"]
+            else:
+                image_keys = ["image"]  # default fallback
+        
+        # Create obs_dict with the correct key(s)
+        obs_dict = {}
+        for key in image_keys:
+            # Get image shape from shape_meta or use default
+            if key in shape_meta.get("obs", {}):
+                obs_shape = shape_meta["obs"][key]["shape"]
+                if isinstance(obs_shape, list) and len(obs_shape) >= 2:
+                    C, H, W = obs_shape[0], obs_shape[1], obs_shape[2] if len(obs_shape) > 2 else obs_shape[1]
+                else:
+                    C, H, W = 3, image_resolution, image_resolution
+            else:
+                C, H, W = 3, image_resolution, image_resolution
+            
+            obs_dict[key] = torch.randn(BATCH_SIZE, 16, C, H, W, device=DEVICE, dtype=torch.float32)
+        
+        print(f"[INFO] Using image observation keys: {image_keys}")
+        print(f"[INFO] Image resolution: {image_resolution}, Shape: (B={BATCH_SIZE}, T=16, C={C}, H={H}, W={W})")
+        
+        # Language goal (only if task uses language)
+        if cfg.task.dataset.language_emb_model is not None:
+            LANG = "KITCHEN SCENE6 put the yellow and white mug in the microwave and close it"
+            language_goal = [LANG] * BATCH_SIZE
+        else:
+            language_goal = None
+            print(f"[INFO] Task '{task_name}' does not use language embeddings")
 
         # ---------- Warm-up ----------
         for _ in range(NUM_WARMUP):
