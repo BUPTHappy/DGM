@@ -61,34 +61,44 @@ def cuda_event_timer():
     torch.cuda.synchronize()
 
 # ===================== MAIN =====================
-@hydra.main(
-    version_base=None,
-    config_path="../unified_video_action/config",
-    config_name="config",
-)
-def main(cfg: DictConfig):
+# Pre-process sys.argv to handle save_folder without + prefix
+# This must be done BEFORE @hydra.main decorator executes
+for i, arg in enumerate(sys.argv):
+    if arg.startswith("save_folder=") and not arg.startswith("+save_folder="):
+        # User forgot the + prefix, add it for Hydra
+        sys.argv[i] = f"+{arg}"
+        break
+
+def _main_impl(cfg: DictConfig):
     if DEVICE != "cuda":
         raise RuntimeError("This timing script requires CUDA for accurate measurement.")
 
+    # Disable struct mode to allow adding save_folder
+    OmegaConf.set_struct(cfg, False)
+    
     # Get save_folder from command line overrides first, then config, then default
     LOG_PATH = None
     
-    # Check command line arguments for save_folder
+    # Check command line arguments for save_folder (with or without + prefix)
     for arg in sys.argv:
-        if arg.startswith("save_folder=") or arg.startswith("+save_folder="):
-            LOG_PATH = arg.split("=", 1)[1].strip('"\'')
-            break
+        if "save_folder=" in arg:
+            # Handle both save_folder=... and +save_folder=...
+            parts = arg.split("=", 1)
+            if len(parts) == 2:
+                LOG_PATH = parts[1].strip('"\'')
+                break
     
     # If not found in command line, check config
     if LOG_PATH is None:
-        with open_dict(cfg):
-            # Allow setting save_folder even if not in struct
-            if hasattr(cfg, 'save_folder') and cfg.save_folder and cfg.save_folder.strip():
-                LOG_PATH = cfg.save_folder
-            else:
-                # Default fallback
-                LOG_PATH = "profiling/time_comparison/default_timing.txt"
-                cfg.save_folder = LOG_PATH  # Set it so it's available later
+        # Allow setting save_folder even if not in struct
+        if hasattr(cfg, 'save_folder') and cfg.save_folder and str(cfg.save_folder).strip():
+            LOG_PATH = str(cfg.save_folder).strip()
+        else:
+            # Default fallback
+            LOG_PATH = "profiling/time_comparison/default_timing.txt"
+    
+    # Set save_folder in config for consistency
+    cfg.save_folder = LOG_PATH
 
     # cfg tweaks (copied from your script)
     OmegaConf.resolve(cfg)
@@ -318,6 +328,15 @@ def main(cfg: DictConfig):
             f.write(f"Avg pre-sample_tokens        : {avg_pre:.3f} ms\n")
 
         print(f"[✓] Timing log written to {LOG_PATH}")
+
+@hydra.main(
+    version_base=None,
+    config_path="../unified_video_action/config",
+    config_name="config",
+)
+def main(cfg: DictConfig):
+    # Call the actual implementation
+    _main_impl(cfg)
 
 if __name__ == "__main__":
     main()
