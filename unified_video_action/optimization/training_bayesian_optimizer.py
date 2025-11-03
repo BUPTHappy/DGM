@@ -144,7 +144,8 @@ class TrainingBayesianOptimizer:
                 "--checkpoint", checkpoint_path,
                 "--output_dir", temp_output_dir,
                 "--device", self.device,
-                "--use_ucgm"
+                "--use_ucgm",
+                "--n_test", str(self.n_test)  # Pass n_test to match normal eval
             ]
             
             env = os.environ.copy()
@@ -347,6 +348,7 @@ class TrainingBayesianOptimizer:
                 "--output_dir", temp_output_dir,
                 "--device", self.device,
                 "--use_ucgm",
+                "--n_test", str(self.n_test),  # Pass n_test to match normal eval
                 "--num_sampling_steps", str(params['num_sampling_steps']),
                 "--stochasticity_rate", str(params['consistc_ratio']),
                 "--window_size", str(params['window_size']),
