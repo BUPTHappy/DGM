@@ -125,6 +125,17 @@ def _main_impl(cfg: DictConfig):
             normalizer_type=cfg.task.dataset.normalizer_type,
             language_emb_model=language_emb_model,
         ).to(DEVICE).eval()
+        
+        # Verify model components are initialized
+        if hasattr(model, 'model'):
+            print(f"[INFO] Model predict_action: {getattr(model.model, 'predict_action', 'NOT SET')}")
+            print(f"[INFO] Model predict_video: {getattr(model.model, 'predict_video', 'NOT SET')}")
+            if hasattr(model.model, 'diffactloss'):
+                print(f"[INFO] DiffActLoss found: {type(model.model.diffactloss)}")
+            else:
+                print("[WARN] DiffActLoss not found in model!")
+                if hasattr(model.model, '__dict__'):
+                    print(f"[INFO] Available attributes: {list(model.model.__dict__.keys())[:10]}...")
 
         # ---------- Dummy normalizer (identity) ----------
         from unified_video_action.model.common.normalizer import (
@@ -212,8 +223,21 @@ def _main_impl(cfg: DictConfig):
             print(f"[INFO] Task '{task_name}' does not use language embeddings")
 
         # ---------- Warm-up ----------
-        for _ in range(NUM_WARMUP):
-            _ = model.predict_action(obs_dict, language_goal)
+        print("[INFO] Warming up model...")
+        for i in range(NUM_WARMUP):
+            try:
+                result = model.predict_action(obs_dict, language_goal)
+                if result is None or "action" not in result:
+                    print(f"[WARN] Warmup iteration {i}: predict_action returned invalid result")
+            except Exception as e:
+                print(f"[WARN] Warmup iteration {i} failed: {e}")
+                # Check if model components are initialized
+                if hasattr(model, 'model'):
+                    print(f"  - model.model.predict_action: {getattr(model.model, 'predict_action', 'NOT FOUND')}")
+                    print(f"  - model.model.diffactloss: {getattr(model.model, 'diffactloss', 'NOT FOUND')}")
+                    if hasattr(model.model, 'diffactloss'):
+                        print(f"  - diffactloss type: {type(model.model.diffactloss)}")
+                raise
 
         # ---------- Monkey-patch timings ----------
         sample_owner, sample_attr = _find_sample_tokens_owner(model)
