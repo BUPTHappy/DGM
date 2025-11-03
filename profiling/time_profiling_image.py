@@ -70,7 +70,25 @@ def main(cfg: DictConfig):
     if DEVICE != "cuda":
         raise RuntimeError("This timing script requires CUDA for accurate measurement.")
 
-    LOG_PATH = cfg.save_folder
+    # Get save_folder from command line overrides first, then config, then default
+    LOG_PATH = None
+    
+    # Check command line arguments for save_folder
+    for arg in sys.argv:
+        if arg.startswith("save_folder=") or arg.startswith("+save_folder="):
+            LOG_PATH = arg.split("=", 1)[1].strip('"\'')
+            break
+    
+    # If not found in command line, check config
+    if LOG_PATH is None:
+        with open_dict(cfg):
+            # Allow setting save_folder even if not in struct
+            if hasattr(cfg, 'save_folder') and cfg.save_folder and cfg.save_folder.strip():
+                LOG_PATH = cfg.save_folder
+            else:
+                # Default fallback
+                LOG_PATH = "profiling/time_comparison/default_timing.txt"
+                cfg.save_folder = LOG_PATH  # Set it so it's available later
 
     # cfg tweaks (copied from your script)
     OmegaConf.resolve(cfg)
