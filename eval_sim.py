@@ -1,13 +1,9 @@
 import sys
-import os
-
-# CRITICAL: Set TOKENIZERS_PARALLELISM before any imports that might use tokenizers
-# This must be set before forking processes (AsyncVectorEnv) to avoid deadlocks
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 sys.stdout = open(sys.stdout.fileno(), mode="w", buffering=1)
 sys.stderr = open(sys.stderr.fileno(), mode="w", buffering=1)
 import numpy as np
+import os
 import pathlib
 import click
 import hydra
@@ -78,22 +74,13 @@ from types import SimpleNamespace
     help="Lambda parameter for local feature fusion."
 )
 def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
-    import time
-    start_time = time.time()
-    print(f"[eval_sim] Starting evaluation at {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"[eval_sim] Checkpoint: {checkpoint}")
-    print(f"[eval_sim] Output dir: {output_dir}")
-    print(f"[eval_sim] Device: {device}")
-    print(f"[eval_sim] n_test: {n_test}")
-    
+
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
     # load checkpoint
-    print(f"[eval_sim] Loading checkpoint...")
-    checkpoint_load_start = time.time()
+
     payload = torch.load(open(checkpoint, "rb"), pickle_module=dill, weights_only=False)
     cfg = payload["cfg"]
-    print(f"[eval_sim] Checkpoint loaded in {time.time() - checkpoint_load_start:.2f} seconds")
     
 
     #cfg.model.policy.autoregressive_model_params.num_sampling_steps = str(num_sampling_steps)
@@ -175,21 +162,8 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
     else:
         policy = workspace.model
         print("Using regular policy for evaluation.")
-    
-    # CRITICAL: Do NOT move policy to CUDA before forking!
-    # CUDA contexts don't work with fork() - if we have CUDA tensors when forking,
-    # the child processes will have invalid CUDA contexts, causing nvidia-smi to hang
-    # and the entire system to become unresponsive.
-    # Strategy: Keep policy on CPU, create all environments (which fork), THEN move to CUDA
+    policy.to(device)
     policy.eval()
-    
-    # Ensure we're not holding any CUDA context
-    if "cuda" in device:
-        # Release any existing CUDA context
-        torch.cuda.empty_cache()
-        if torch.cuda.is_initialized():
-            torch.cuda.synchronize()
-        print(f"[eval_sim] Policy kept on CPU to avoid CUDA context issues during fork")
     
     if "libero" in cfg.task.name:
         cfg.task.env_runner.n_test = 10 if n_test is None else int(n_test)
@@ -204,49 +178,14 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
     else:
         cfg.task.env_runner.n_test = 50
         
-    print(f"[eval_sim] Loading environment runners...")
-    env_runner_start = time.time()
-    try:
-        # CRITICAL: Create environments BEFORE moving policy to CUDA
-        # This avoids CUDA context issues when AsyncVectorEnv forks processes
-        env_runners = load_env_runner(cfg, output_dir)
-        print(f"[eval_sim] Environment runners loaded in {time.time() - env_runner_start:.2f} seconds")
-        print(f"[eval_sim] Number of env runners: {len(env_runners) if isinstance(env_runners, list) else 1}")
-    except Exception as e:
-        print(f"[eval_sim] ERROR loading environment runners: {e}")
-        import traceback
-        traceback.print_exc()
-        raise
-    
-    # NOW move policy to CUDA after all forks are complete
-    print(f"[eval_sim] Moving policy to device {device} (after env creation)...")
-    if "cuda" in device:
-        # Ensure CUDA is ready
-        torch.cuda.empty_cache()
-        torch.cuda.synchronize()
-    policy.to(device)
-    if "cuda" in device:
-        torch.cuda.synchronize()
-        print(f"[eval_sim] Policy moved to CUDA and synchronized")
+    env_runners = load_env_runner(cfg, output_dir)
 
     if "libero" in cfg.task.name:
         step_log = {}
-        print(f"[eval_sim] Starting evaluation for {len(env_runners)} task(s)...")
-        for idx, env_runner in enumerate(env_runners):
-            print(f"[eval_sim] Running task {idx+1}/{len(env_runners)}...")
-            task_start = time.time()
-            try:
-                runner_log = env_runner.run(policy)
-                step_log.update(runner_log)
-                task_elapsed = time.time() - task_start
-                print(f"[eval_sim] Task {idx+1} completed in {task_elapsed:.2f} seconds ({task_elapsed/60:.2f} minutes)")
-                print(f"[eval_sim] Task {idx+1} results: {runner_log}")
-            except Exception as e:
-                print(f"[eval_sim] ERROR in task {idx+1}: {e}")
-                import traceback
-                traceback.print_exc()
-                # Continue with next task instead of failing completely
-                continue
+        for env_runner in env_runners:
+            runner_log = env_runner.run(policy)
+            step_log.update(runner_log)
+            print(step_log)
 
         assert "test_mean_score" not in step_log
         all_test_mean_score = {
@@ -276,10 +215,8 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
         print(k, v)
 
     out_path = os.path.join(output_dir, f'eval_log_{checkpoint.split("/")[-1]}.json')
-    print(f"[eval_sim] Saving log to {out_path}")
+    print("Saving log to %s" % out_path)
     json.dump(json_log, open(out_path, "w"), indent=2, sort_keys=True)
-    total_time = time.time() - start_time
-    print(f"[eval_sim] Evaluation completed in {total_time:.2f} seconds ({total_time/60:.2f} minutes)")
 
 
 if __name__ == "__main__":

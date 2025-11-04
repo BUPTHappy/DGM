@@ -144,20 +144,13 @@ class TrainingBayesianOptimizer:
                 "--checkpoint", checkpoint_path,
                 "--output_dir", temp_output_dir,
                 "--device", self.device,
-                "--use_ucgm",
-                "--n_test", str(self.n_test)  # Pass n_test to match normal eval
+                "--use_ucgm"
             ]
             
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = self.device.split(":")[-1] if ":" in self.device else "0"
-            # CRITICAL: Disable tokenizers parallelism to avoid deadlock when forking processes
-            env["TOKENIZERS_PARALLELISM"] = "false"
             
             print(f"Running evaluation with timeout: {timeout} seconds")
-            print(f"Command: {' '.join(cmd)}")
-            import time as time_module
-            eval_start_time = time_module.time()
-            print(f"[Bayesian] Starting subprocess evaluation at {time_module.strftime('%Y-%m-%d %H:%M:%S', time_module.localtime())}")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -165,20 +158,9 @@ class TrainingBayesianOptimizer:
                 env=env,
                 timeout=timeout
             )
-            eval_elapsed = time_module.time() - eval_start_time
-            print(f"[Bayesian] Evaluation completed in {eval_elapsed:.2f} seconds ({eval_elapsed/60:.2f} minutes)")
-            if result.stdout:
-                # Print last 1000 chars to see what happened
-                stdout_tail = result.stdout[-1000:] if len(result.stdout) > 1000 else result.stdout
-                print(f"[Bayesian] Evaluation stdout (last 1000 chars):\n{stdout_tail}")
-            if result.stderr:
-                stderr_tail = result.stderr[-1000:] if len(result.stderr) > 1000 else result.stderr
-                print(f"[Bayesian] Evaluation stderr (last 1000 chars):\n{stderr_tail}")
             
             if result.returncode != 0:
-                print(f"[Bayesian] Current checkpoint evaluation failed with return code {result.returncode}")
-                if result.stderr:
-                    print(f"[Bayesian] Full stderr:\n{result.stderr}")
+                print(f"Current checkpoint evaluation failed: {result.stderr}")
                 return -1000.0
             
             # Parse results
@@ -213,12 +195,9 @@ class TrainingBayesianOptimizer:
             
             return float(score)
             
-        except subprocess.TimeoutExpired as e:
-            print(f"[Bayesian] Current checkpoint evaluation timeout after {timeout} seconds ({timeout/60:.2f} minutes)")
-            print(f"[Bayesian] This may indicate that:")
-            print(f"  1. Evaluation is taking longer than expected (consider increasing timeout)")
-            print(f"  2. Evaluation is stuck/hanging (check eval_sim.py output above)")
-            print(f"[Bayesian] TimeoutExpired details: {e}")
+        except subprocess.TimeoutExpired:
+            print(f"Current checkpoint evaluation timeout after {timeout} seconds")
+            print(f"Evaluation may need more time. Consider increasing timeout or reducing n_test.")
             torch.cuda.empty_cache()
             return -1000.0
         except RuntimeError as e:
@@ -350,7 +329,6 @@ class TrainingBayesianOptimizer:
                 "--output_dir", temp_output_dir,
                 "--device", self.device,
                 "--use_ucgm",
-                "--n_test", str(self.n_test),  # Pass n_test to match normal eval
                 "--num_sampling_steps", str(params['num_sampling_steps']),
                 "--stochasticity_rate", str(params['consistc_ratio']),
                 "--window_size", str(params['window_size']),
@@ -359,14 +337,8 @@ class TrainingBayesianOptimizer:
             
             env = os.environ.copy()
             env["CUDA_VISIBLE_DEVICES"] = self.device.split(":")[-1] if ":" in self.device else "0"
-            # CRITICAL: Disable tokenizers parallelism to avoid deadlock when forking processes
-            env["TOKENIZERS_PARALLELISM"] = "false"
             
             print(f"Running evaluation with timeout: {timeout} seconds")
-            print(f"Command: {' '.join(cmd)}")
-            import time as time_module
-            eval_start_time = time_module.time()
-            print(f"[Bayesian] Starting subprocess evaluation at {time_module.strftime('%Y-%m-%d %H:%M:%S', time_module.localtime())}")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -374,20 +346,9 @@ class TrainingBayesianOptimizer:
                 env=env,
                 timeout=timeout
             )
-            eval_elapsed = time_module.time() - eval_start_time
-            print(f"[Bayesian] Evaluation completed in {eval_elapsed:.2f} seconds ({eval_elapsed/60:.2f} minutes)")
-            if result.stdout:
-                # Print last 1000 chars to see what happened
-                stdout_tail = result.stdout[-1000:] if len(result.stdout) > 1000 else result.stdout
-                print(f"[Bayesian] Evaluation stdout (last 1000 chars):\n{stdout_tail}")
-            if result.stderr:
-                stderr_tail = result.stderr[-1000:] if len(result.stderr) > 1000 else result.stderr
-                print(f"[Bayesian] Evaluation stderr (last 1000 chars):\n{stderr_tail}")
             
             if result.returncode != 0:
-                print(f"[Bayesian] Evaluation failed with return code {result.returncode}")
-                if result.stderr:
-                    print(f"[Bayesian] Full stderr:\n{result.stderr}")
+                print(f"Evaluation failed: {result.stderr}")
                 return -1000.0
             
             # Parse results
@@ -422,12 +383,9 @@ class TrainingBayesianOptimizer:
             
             return float(score)
             
-        except subprocess.TimeoutExpired as e:
-            print(f"[Bayesian] Evaluation timeout after {timeout} seconds ({timeout/60:.2f} minutes)")
-            print(f"[Bayesian] This may indicate that:")
-            print(f"  1. Evaluation is taking longer than expected (consider increasing timeout)")
-            print(f"  2. Evaluation is stuck/hanging (check eval_sim.py output above)")
-            print(f"[Bayesian] TimeoutExpired details: {e}")
+        except subprocess.TimeoutExpired:
+            print(f"Evaluation timeout after {timeout} seconds")
+            print(f"Evaluation may need more time. Consider increasing timeout or reducing n_test.")
             torch.cuda.empty_cache()
             return -1000.0
         except RuntimeError as e:

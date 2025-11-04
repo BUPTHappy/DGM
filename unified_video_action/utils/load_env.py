@@ -20,16 +20,6 @@ def load_env_runner(cfg, output_dir):
         for file in hdf5_files:
             # configure env
             env_runner: BaseImageRunner
-            # CRITICAL: Ensure CUDA is synchronized before creating each env_runner
-            # Each env_runner will create AsyncVectorEnv which forks processes
-            # CUDA contexts don't work well with fork, so we need to sync before each fork
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
-            except:
-                pass  # If torch is not available, continue anyway
-            
             env_runner = hydra.utils.instantiate(
                 cfg.task.env_runner, task_dir=file, output_dir=output_dir
             )
