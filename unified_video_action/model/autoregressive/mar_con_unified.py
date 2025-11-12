@@ -50,16 +50,24 @@ class LocalCausalAttention(nn.Module):
         self.proj = nn.Linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def create_local_causal_mask(self, seq_len):
+    def create_local_causal_mask(self, seq_len, device):
         """Create local causal mask with window size"""
-        mask = torch.zeros(seq_len, seq_len)
+        # Cache mask if seq_len and window_size haven't changed
+        cache_key = f"{seq_len}_{self.window_size}"
+        if not hasattr(self, '_mask_cache'):
+            self._mask_cache = {}
         
-        for i in range(seq_len):
-            # Each position can only attend to current and previous window_size-1 positions
-            start_idx = max(0, i - self.window_size + 1)
-            mask[i, start_idx:i+1] = 1
+        if cache_key not in self._mask_cache:
+            mask = torch.zeros(seq_len, seq_len, dtype=torch.bool, device=device)
             
-        return mask == 0  # True for positions that should be masked
+            for i in range(seq_len):
+                # Each position can only attend to current and previous window_size-1 positions
+                start_idx = max(0, i - self.window_size + 1)
+                mask[i, start_idx:i+1] = True
+            
+            self._mask_cache[cache_key] = mask
+        
+        return self._mask_cache[cache_key]
 
     def forward(self, x):
         B, N, C = x.shape
@@ -72,7 +80,7 @@ class LocalCausalAttention(nn.Module):
         attn = (q @ k.transpose(-2, -1)) * self.scale
         
         # Apply local causal mask
-        local_causal_mask = self.create_local_causal_mask(N).to(x.device)
+        local_causal_mask = self.create_local_causal_mask(N, x.device)
         attn = attn.masked_fill(local_causal_mask, float('-inf'))
         
         attn = attn.softmax(dim=-1)
@@ -865,25 +873,76 @@ class MAR(nn.Module):
         # ========= Normalization =========
         x = self.z_proj_ln(x)
 
-        # ========= Transformer Encoder Blocks ========
-        if self.grad_checkpointing and not torch.jit.is_scripting():
-            for block in self.encoder_blocks:
-                x = checkpoint(block, x)
-        else:
-            for block in self.encoder_blocks:
-                x = block(x)
-        global_features = self.encoder_norm(x)
+        # ========= Clone input for parallel processing =========
+        # Clone early to enable parallel computation of global and local attention
+        local_x = x.clone()
 
-        # ========= Local Causal Transformer Processing =========
-        # Process with local causal attention
-        local_x = x.clone()  # Start with the same input
-        if self.grad_checkpointing and not torch.jit.is_scripting():
-            for block in self.local_causal_encoder_blocks:
-                local_x = checkpoint(block, local_x)
+        # ========= Parallel Transformer Processing using CUDA Streams =========
+        # Use separate CUDA streams to enable true parallel execution on GPU
+        if x.is_cuda:
+            # Create separate streams for global and local processing
+            local_stream = torch.cuda.Stream()
+            
+            # Prepare tensors for parallel execution (ensure they're ready and independent)
+            # Use non_blocking to avoid implicit synchronization
+            local_x = local_x.contiguous()
+            x = x.contiguous()
+            
+            # Create event for synchronization (only for final sync)
+            local_ready = torch.cuda.Event(enable_timing=False)
+            
+            # Store references to avoid immediate access (which would cause sync)
+            local_features_ref = [None]
+            
+            # Execute local processing in separate stream (truly async, no dependencies)
+            # All operations are queued to local_stream without waiting for default stream
+            with torch.cuda.stream(local_stream):
+                if self.grad_checkpointing and not torch.jit.is_scripting():
+                    local_x_out = local_x
+                    for block in self.local_causal_encoder_blocks:
+                        local_x_out = checkpoint(block, local_x_out)
+                else:
+                    local_x_out = local_x
+                    for block in self.local_causal_encoder_blocks:
+                        local_x_out = block(local_x_out)
+                local_features_ref[0] = self.local_causal_encoder_norm(local_x_out)
+                # Record event when local processing is done
+                local_ready.record(local_stream)
+            
+            # Execute global processing in default stream (runs in parallel with local)
+            # These operations are queued to default_stream and can run concurrently
+            # DO NOT access local_features_ref here to avoid implicit sync
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                x_out = x
+                for block in self.encoder_blocks:
+                    x_out = checkpoint(block, x_out)
+            else:
+                x_out = x
+                for block in self.encoder_blocks:
+                    x_out = block(x_out)
+            global_features = self.encoder_norm(x_out)
+            
+            # Wait for local stream to complete before accessing local_features
+            # This is the only synchronization point - both streams run independently until here
+            torch.cuda.current_stream().wait_event(local_ready)
+            local_features = local_features_ref[0]
         else:
-            for block in self.local_causal_encoder_blocks:
-                local_x = block(local_x)
-        local_features = self.local_causal_encoder_norm(local_x)
+            # CPU fallback: sequential execution
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                for block in self.encoder_blocks:
+                    x = checkpoint(block, x)
+            else:
+                for block in self.encoder_blocks:
+                    x = block(x)
+            global_features = self.encoder_norm(x)
+            
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                for block in self.local_causal_encoder_blocks:
+                    local_x = checkpoint(block, local_x)
+            else:
+                for block in self.local_causal_encoder_blocks:
+                    local_x = block(local_x)
+            local_features = self.local_causal_encoder_norm(local_x)
 
         # ========= Feature Fusion =========
         # 现在使用真正的local attention特征进行融合

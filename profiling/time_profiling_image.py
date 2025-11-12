@@ -61,18 +61,53 @@ def cuda_event_timer():
     torch.cuda.synchronize()
 
 # ===================== MAIN =====================
-@hydra.main(
-    version_base=None,
-    config_path="../unified_video_action/config",
-    config_name="config",
-)
-def main(cfg: DictConfig):
+# Pre-process sys.argv to handle save_folder without + prefix
+# This must be done BEFORE @hydra.main decorator executes
+for i, arg in enumerate(sys.argv):
+    if arg.startswith("save_folder=") and not arg.startswith("+save_folder="):
+        # User forgot the + prefix, add it for Hydra
+        sys.argv[i] = f"+{arg}"
+        break
+
+def _main_impl(cfg: DictConfig):
     if DEVICE != "cuda":
         raise RuntimeError("This timing script requires CUDA for accurate measurement.")
 
-    LOG_PATH = cfg.save_folder
+    # Disable struct mode to allow adding save_folder
+    OmegaConf.set_struct(cfg, False)
+    
+    # Get save_folder from command line overrides first, then config, then default
+    LOG_PATH = None
+    
+    # Check command line arguments for save_folder (with or without + prefix)
+    for arg in sys.argv:
+        if "save_folder=" in arg:
+            # Handle both save_folder=... and +save_folder=...
+            parts = arg.split("=", 1)
+            if len(parts) == 2:
+                LOG_PATH = parts[1].strip('"\'')
+                break
+    
+    # If not found in command line, check config
+    if LOG_PATH is None:
+        # Allow setting save_folder even if not in struct
+        if hasattr(cfg, 'save_folder') and cfg.save_folder and str(cfg.save_folder).strip():
+            LOG_PATH = str(cfg.save_folder).strip()
+        else:
+            # Default fallback
+            LOG_PATH = "profiling/time_comparison/default_timing.txt"
+    
+    # Set save_folder in config for consistency
+    cfg.save_folder = LOG_PATH
 
     # cfg tweaks (copied from your script)
+    # Force predict_action=True for profiling (even if config says False)
+    # This ensures diffactloss is initialized
+    with open_dict(cfg):
+        if not cfg.model.policy.action_model_params.predict_action:
+            print("[INFO] Force setting action_model_params.predict_action=True for profiling")
+            cfg.model.policy.action_model_params.predict_action = True
+    
     OmegaConf.resolve(cfg)
     if cfg.model.policy.action_model_params.predict_action is False:
         cfg.checkpoint.topk.monitor_key = "video_fvd"
@@ -97,6 +132,26 @@ def main(cfg: DictConfig):
             normalizer_type=cfg.task.dataset.normalizer_type,
             language_emb_model=language_emb_model,
         ).to(DEVICE).eval()
+        
+        # Force predict_action=True for profiling (even if config says False)
+        # This is necessary because we need to measure action prediction time
+        if hasattr(model, 'model'):
+            if hasattr(model.model, 'predict_action') and not model.model.predict_action:
+                print(f"[INFO] Force setting predict_action=True for profiling (was False)")
+                model.model.predict_action = True
+            # Ensure predict_video is also True (needed for sample_tokens to work)
+            if hasattr(model.model, 'predict_video') and not model.model.predict_video:
+                print(f"[INFO] Force setting predict_video=True for profiling (was False)")
+                model.model.predict_video = True
+        
+        # Verify model components are initialized
+        if hasattr(model, 'model'):
+            print(f"[INFO] Model predict_action: {getattr(model.model, 'predict_action', 'NOT SET')}")
+            print(f"[INFO] Model predict_video: {getattr(model.model, 'predict_video', 'NOT SET')}")
+            if hasattr(model.model, 'diffactloss'):
+                print(f"[INFO] DiffActLoss found: {type(model.model.diffactloss)}")
+            else:
+                print("[WARN] DiffActLoss not found - this may cause errors if predict_action=True")
 
         # ---------- Dummy normalizer (identity) ----------
         from unified_video_action.model.common.normalizer import (
@@ -109,16 +164,96 @@ def main(cfg: DictConfig):
         model.set_normalizer(dummy_norm)
 
         # ---------- Dummy inputs ----------
-        LANG = "KITCHEN SCENE6 put the yellow and white mug in the microwave and close it"
-        obs_dict = {
-            # shape: (B, T, C, H, W)
-            "agentview_image": torch.randn(BATCH_SIZE, 16, 3, 128, 128, device=DEVICE, dtype=torch.float32),
-        }
-        language_goal = [LANG] * BATCH_SIZE  # length BATCH_SIZE
+        # Dynamically determine the correct image observation key from shape_meta
+        shape_meta = cfg.task.shape_meta
+        image_keys = []
+        image_resolution = shape_meta.get("image_resolution", 128)
+        task_name = cfg.task.name
+        
+        # Find all RGB image observation keys
+        if "obs" in shape_meta:
+            for key, obs_spec in shape_meta["obs"].items():
+                if obs_spec.get("type") == "rgb":
+                    image_keys.append(key)
+        
+        # Fallback: try common keys based on task name
+        if not image_keys:
+            if "libero" in task_name:
+                image_keys = ["agentview_image"]
+            elif "pusht" in task_name:
+                image_keys = ["image"]
+            elif "umi" in task_name:
+                image_keys = ["camera0_rgb"]
+            else:
+                image_keys = ["image"]  # default fallback
+        
+        # Map shape_meta keys to what resize_image_eval expects
+        # resize_image_eval expects specific key names and will convert them to "image"
+        key_mapping = {}
+        for key in image_keys:
+            # For libero: agentview_rgb -> agentview_image (what resize_image_eval expects)
+            if "libero" in task_name and key == "agentview_rgb":
+                mapped_key = "agentview_image"
+            # For umi: camera0_rgb -> camera0_rgb (already correct)
+            elif "umi" in task_name and key == "camera0_rgb":
+                mapped_key = "camera0_rgb"
+            # For pusht: image -> image (already correct)
+            elif "pusht" in task_name and key == "image":
+                mapped_key = "image"
+            # For toolhang: sideview_image, robot0_eye_in_hand_image
+            elif "toolhang" in task_name:
+                if key == "sideview_image":
+                    mapped_key = "sideview_image"
+                elif "eye_in_hand" in key or "wrist" in key:
+                    mapped_key = "robot0_eye_in_hand_image"
+                else:
+                    mapped_key = key
+            else:
+                mapped_key = key
+            key_mapping[key] = mapped_key
+        
+        # Create obs_dict with the correct key(s) that resize_image_eval expects
+        obs_dict = {}
+        for original_key, mapped_key in key_mapping.items():
+            # Get image shape from shape_meta or use default
+            if original_key in shape_meta.get("obs", {}):
+                obs_shape = shape_meta["obs"][original_key]["shape"]
+                if isinstance(obs_shape, list) and len(obs_shape) >= 2:
+                    C, H, W = obs_shape[0], obs_shape[1], obs_shape[2] if len(obs_shape) > 2 else obs_shape[1]
+                else:
+                    C, H, W = 3, image_resolution, image_resolution
+            else:
+                C, H, W = 3, image_resolution, image_resolution
+            
+            obs_dict[mapped_key] = torch.randn(BATCH_SIZE, 16, C, H, W, device=DEVICE, dtype=torch.float32)
+        
+        print(f"[INFO] Using image observation keys: {list(key_mapping.values())} (mapped from {list(key_mapping.keys())})")
+        print(f"[INFO] Image resolution: {image_resolution}, Shape: (B={BATCH_SIZE}, T=16, C={C}, H={H}, W={W})")
+        
+        # Language goal (only if task uses language)
+        if cfg.task.dataset.language_emb_model is not None:
+            LANG = "KITCHEN SCENE6 put the yellow and white mug in the microwave and close it"
+            language_goal = [LANG] * BATCH_SIZE
+        else:
+            language_goal = None
+            print(f"[INFO] Task '{task_name}' does not use language embeddings")
 
         # ---------- Warm-up ----------
-        for _ in range(NUM_WARMUP):
-            _ = model.predict_action(obs_dict, language_goal)
+        print("[INFO] Warming up model...")
+        for i in range(NUM_WARMUP):
+            try:
+                result = model.predict_action(obs_dict, language_goal)
+                if result is None or "action" not in result:
+                    print(f"[WARN] Warmup iteration {i}: predict_action returned invalid result")
+            except Exception as e:
+                print(f"[WARN] Warmup iteration {i} failed: {e}")
+                # Check if model components are initialized
+                if hasattr(model, 'model'):
+                    print(f"  - model.model.predict_action: {getattr(model.model, 'predict_action', 'NOT FOUND')}")
+                    print(f"  - model.model.diffactloss: {getattr(model.model, 'diffactloss', 'NOT FOUND')}")
+                    if hasattr(model.model, 'diffactloss'):
+                        print(f"  - diffactloss type: {type(model.model.diffactloss)}")
+                raise
 
         # ---------- Monkey-patch timings ----------
         sample_owner, sample_attr = _find_sample_tokens_owner(model)
@@ -258,6 +393,15 @@ def main(cfg: DictConfig):
             f.write(f"Avg pre-sample_tokens        : {avg_pre:.3f} ms\n")
 
         print(f"[✓] Timing log written to {LOG_PATH}")
+
+@hydra.main(
+    version_base=None,
+    config_path="../unified_video_action/config",
+    config_name="config",
+)
+def main(cfg: DictConfig):
+    # Call the actual implementation
+    _main_impl(cfg)
 
 if __name__ == "__main__":
     main()
