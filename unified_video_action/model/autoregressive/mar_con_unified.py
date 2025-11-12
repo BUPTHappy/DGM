@@ -875,26 +875,42 @@ class MAR(nn.Module):
             # Create separate streams for global and local processing
             local_stream = torch.cuda.Stream()
             
-            # Start local attention processing in separate stream (non-blocking)
-            with torch.cuda.stream(local_stream):
+            # Prepare tensors for parallel execution
+            local_x = local_x.contiguous()
+            x = x.contiguous()
+            
+            # Define local processing function to execute in separate stream
+            def process_local():
                 if self.grad_checkpointing and not torch.jit.is_scripting():
+                    local_x_out = local_x
                     for block in self.local_causal_encoder_blocks:
-                        local_x = checkpoint(block, local_x)
+                        local_x_out = checkpoint(block, local_x_out)
                 else:
+                    local_x_out = local_x
                     for block in self.local_causal_encoder_blocks:
-                        local_x = block(local_x)
-                local_features = self.local_causal_encoder_norm(local_x)
+                        local_x_out = block(local_x_out)
+                return self.local_causal_encoder_norm(local_x_out)
             
-            # Process global attention in default stream (can run in parallel with local)
-            if self.grad_checkpointing and not torch.jit.is_scripting():
-                for block in self.encoder_blocks:
-                    x = checkpoint(block, x)
-            else:
-                for block in self.encoder_blocks:
-                    x = block(x)
-            global_features = self.encoder_norm(x)
+            # Define global processing function
+            def process_global():
+                if self.grad_checkpointing and not torch.jit.is_scripting():
+                    x_out = x
+                    for block in self.encoder_blocks:
+                        x_out = checkpoint(block, x_out)
+                else:
+                    x_out = x
+                    for block in self.encoder_blocks:
+                        x_out = block(x_out)
+                return self.encoder_norm(x_out)
             
-            # Synchronize: wait for local stream to complete before fusion
+            # Execute local processing in separate stream (non-blocking)
+            with torch.cuda.stream(local_stream):
+                local_features = process_local()
+            
+            # Execute global processing in default stream (runs in parallel)
+            global_features = process_global()
+            
+            # Synchronize: wait for local stream before fusion
             torch.cuda.current_stream().wait_stream(local_stream)
         else:
             # CPU fallback: sequential execution
