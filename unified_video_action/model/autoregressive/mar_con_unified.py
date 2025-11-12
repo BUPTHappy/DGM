@@ -865,25 +865,54 @@ class MAR(nn.Module):
         # ========= Normalization =========
         x = self.z_proj_ln(x)
 
-        # ========= Transformer Encoder Blocks ========
-        if self.grad_checkpointing and not torch.jit.is_scripting():
-            for block in self.encoder_blocks:
-                x = checkpoint(block, x)
-        else:
-            for block in self.encoder_blocks:
-                x = block(x)
-        global_features = self.encoder_norm(x)
+        # ========= Clone input for parallel processing =========
+        # Clone early to enable parallel computation of global and local attention
+        local_x = x.clone()
 
-        # ========= Local Causal Transformer Processing =========
-        # Process with local causal attention
-        local_x = x.clone()  # Start with the same input
-        if self.grad_checkpointing and not torch.jit.is_scripting():
-            for block in self.local_causal_encoder_blocks:
-                local_x = checkpoint(block, local_x)
+        # ========= Parallel Transformer Processing using CUDA Streams =========
+        # Use separate CUDA streams to enable true parallel execution on GPU
+        if x.is_cuda:
+            # Create separate streams for global and local processing
+            local_stream = torch.cuda.Stream()
+            
+            # Start local attention processing in separate stream (non-blocking)
+            with torch.cuda.stream(local_stream):
+                if self.grad_checkpointing and not torch.jit.is_scripting():
+                    for block in self.local_causal_encoder_blocks:
+                        local_x = checkpoint(block, local_x)
+                else:
+                    for block in self.local_causal_encoder_blocks:
+                        local_x = block(local_x)
+                local_features = self.local_causal_encoder_norm(local_x)
+            
+            # Process global attention in default stream (can run in parallel with local)
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                for block in self.encoder_blocks:
+                    x = checkpoint(block, x)
+            else:
+                for block in self.encoder_blocks:
+                    x = block(x)
+            global_features = self.encoder_norm(x)
+            
+            # Synchronize: wait for local stream to complete before fusion
+            torch.cuda.current_stream().wait_stream(local_stream)
         else:
-            for block in self.local_causal_encoder_blocks:
-                local_x = block(local_x)
-        local_features = self.local_causal_encoder_norm(local_x)
+            # CPU fallback: sequential execution
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                for block in self.encoder_blocks:
+                    x = checkpoint(block, x)
+            else:
+                for block in self.encoder_blocks:
+                    x = block(x)
+            global_features = self.encoder_norm(x)
+            
+            if self.grad_checkpointing and not torch.jit.is_scripting():
+                for block in self.local_causal_encoder_blocks:
+                    local_x = checkpoint(block, local_x)
+            else:
+                for block in self.local_causal_encoder_blocks:
+                    local_x = block(local_x)
+            local_features = self.local_causal_encoder_norm(local_x)
 
         # ========= Feature Fusion =========
         # 现在使用真正的local attention特征进行融合
