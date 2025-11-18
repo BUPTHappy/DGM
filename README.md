@@ -1,6 +1,6 @@
 # DGM: Dynamic Generative Modeling for Visuomotor Policy Learning
 
-<img src="overview.png" style="zoom:80%;" />
+![DGM Overview](overview.png)
 
 ## Abstract
 
