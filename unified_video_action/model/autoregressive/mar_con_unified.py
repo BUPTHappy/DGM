@@ -65,7 +65,7 @@ class LocalCausalAttention(nn.Module):
         
         # Generate Q, K, V
         qkv = self.qkv(x).reshape(B, N, 3, self.num_heads, C // self.num_heads).permute(2, 0, 3, 1, 4)
-        q, k, v = qkv[0], qkv[1], qkv[2]  # make torchscript happy (cannot use tensor as tuple)
+        q, k, v = qkv[0], qkv[1], qkv[2]  
 
         # Scale attention
         attn = (q @ k.transpose(-2, -1)) * self.scale

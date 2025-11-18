@@ -1,6 +1,6 @@
 # DGM: Dynamic Generative Modeling for Visuomotor Policy Learning
 
-<img src="/Users/zhuoerliu/Education/École Polytechnique Fédérale de Lausanne/EPFL-301/overview.jpg" style="zoom:80%;" />
+<img src="overview.png" style="zoom:80%;" />
 
 ## Abstract
 

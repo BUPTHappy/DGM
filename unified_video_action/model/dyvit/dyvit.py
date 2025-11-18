@@ -370,7 +370,7 @@ class Attention(nn.Module):
             qkv[0],
             qkv[1],
             qkv[2],
-        )  # make torchscript happy (cannot use tensor as tuple)
+        )  
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
 
