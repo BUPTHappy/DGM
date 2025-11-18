@@ -22,7 +22,7 @@ class DiffActLoss(nn.Module):
         act_diff_testing_steps="100",
         act_model_type="conv_fc",
         diff_model_type="MLP",
-        learn_sigma=False,  # 默认不学 sigma，避免维度不匹配
+        learn_sigma=False,
         ucgmts_config={},
         **kwargs
     ):
@@ -85,7 +85,7 @@ class DiffActLoss(nn.Module):
         elif self.act_model_type == 'fc2':
             self.fc = nn.Sequential(
                 nn.Linear(1024, 256),
-                nn.ReLU(),  # Add an activation function (optional, but common practice)
+                nn.ReLU(),  # Add an activation function 
                 nn.Linear(256, 16)
             )
         elif self.act_model_type == 'none':
@@ -95,7 +95,6 @@ class DiffActLoss(nn.Module):
 
         # Only support MLP architecture for simplicity
         if diff_model_type == "MLP":
-            # 支持 learn_sigma，输出维度 = target_channels * (2 if learn_sigma else 1)
             out_channels = target_channels * (2 if learn_sigma else 1)
             self.net = SimpleMLPAdaLN(
                 in_channels=target_channels,
@@ -172,11 +171,8 @@ class DiffActLoss(nn.Module):
             z = z.reshape(bsz * seq_len, -1)
             target = target.reshape(bsz * seq_len, -1)
             
-            # 如果 learn_sigma=True，需要扩展 target 维度以匹配模型输出
             if self.learn_sigma:
-                # 扩展 target 从 (b*t, 2) 到 (b*t, 4)
-                # 对于 sigma 部分，我们可以用零填充或者复制动作值
-                target_extended = torch.cat([target, target], dim=-1)  # 复制动作值作为 sigma
+                target_extended = torch.cat([target, target], dim=-1)  
                 loss = self.ucgmts.training_step(model=self.net, x=target_extended, c=z)
             else:
                 loss = self.ucgmts.training_step(model=self.net, x=target, c=z)
@@ -247,11 +243,8 @@ class DiffActLoss(nn.Module):
             sampled_token = rearrange(
                 sampled_token, "(b t) c -> b t c", b=bsz
             )
-        
-        # 根据 learn_sigma 决定是否截取前2维
+
         if self.learn_sigma:
-            # 如果学习了 sigma，输出维度是 4，需要截取前2维作为动作
             return sampled_token[:, :, :self.in_channels]
         else:
-            # 如果没有学习 sigma，输出维度已经是 2，直接返回
             return sampled_token

@@ -41,18 +41,22 @@ policy:
     num_sampling_steps: 2
     ucgmts_config:
       transport_type: "Linear"
-      consistc_ratio: 1.0
+      consistc_ratio: 1.0 
       scaled_cbl_eps: 0.0
       ema_decay_rate: 0.0
-      rfba_gap_steps: [0.001, 0.5]  # for 2 steps
+      rfba_gap_steps: [0.001, 0.5] 
+      extrapol_ratio: 0.0
+    # Local attention parameters
+    window_size: 12  
+    lambda_local: 0.1 
     token_pruning: False
     pruning_ratios: None
     restore_after_encoder: None
     #
     num_iter: 1
-    cfg: 1
+    cfg: 1 
     cfg_schedule: "linear"
-    temperature: 0.95
+    temperature: 0.95  
     predict_video: True
     #
     act_diff_training_steps: 1000
@@ -61,8 +65,8 @@ policy:
   action_model_params:
     predict_action: True
     act_model_type: conv_fc
-    diff_model_type: DiT_patches_hybrid
-    learn_sigma: false  # 不学 sigma，避免维度不匹配
+    diff_model_type: MLP
+    learn_sigma: false 
   
   shift_action: True
     

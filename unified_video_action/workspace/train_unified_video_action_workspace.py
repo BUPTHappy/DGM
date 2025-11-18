@@ -595,16 +595,16 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                             print(f"{'='*50}")
                             if hasattr(policy, 'autoregressive_model_params'):
                                 autoregressive_params = policy.autoregressive_model_params
-                                print(f"✓ Verified num_sampling_steps: {autoregressive_params.num_sampling_steps}")
-                                print(f"✓ Verified cfg: {autoregressive_params.cfg}")
-                                print(f"✓ Verified temperature: {autoregressive_params.temperature}")
-                                print(f"✓ Verified window_size: {autoregressive_params.window_size}")
-                                print(f"✓ Verified lambda_local: {autoregressive_params.lambda_local}")
-                                print(f"✓ Verified use_ucgm: {autoregressive_params.use_ucgm}")
+                                print(f" Verified num_sampling_steps: {autoregressive_params.num_sampling_steps}")
+                                print(f" Verified cfg: {autoregressive_params.cfg}")
+                                print(f" Verified temperature: {autoregressive_params.temperature}")
+                                print(f" Verified window_size: {autoregressive_params.window_size}")
+                                print(f" Verified lambda_local: {autoregressive_params.lambda_local}")
+                                print(f" Verified use_ucgm: {autoregressive_params.use_ucgm}")
                                 
                                 if hasattr(autoregressive_params, 'ucgmts_config'):
                                     ucgmts_config = autoregressive_params.ucgmts_config
-                                    print(f"✓ Verified ucgmts_config:")
+                                    print(f" Verified ucgmts_config:")
                                     print(f"    transport_type: {ucgmts_config.transport_type}")
                                     print(f"    consistc_ratio: {ucgmts_config.consistc_ratio}")
                                     print(f"    rfba_gap_steps: {ucgmts_config.rfba_gap_steps}")
@@ -613,10 +613,10 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                                 # Also verify the actual model components
                                 if hasattr(policy, 'model') and hasattr(policy.model, 'diffactloss'):
                                     diffactloss = policy.model.diffactloss
-                                    print(f"✓ Verified DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
+                                    print(f" Verified DiffActLoss num_sampling_steps: {diffactloss.num_sampling_steps}")
                                     if hasattr(diffactloss, 'ucgmts'):
                                         ucgmts = diffactloss.ucgmts
-                                        print(f"✓ Verified UCGMTS parameters:")
+                                        print(f" Verified UCGMTS parameters:")
                                         print(f"    consistc_ratio: {getattr(ucgmts, 'cor', 'N/A')}")
                                         print(f"    scaled_cbl_eps: {getattr(ucgmts, 'huc', 'N/A')}")
                                         print(f"    ema_decay_rate: {getattr(ucgmts, 'emd', 'N/A')}")

@@ -3,7 +3,7 @@ name: uva
 defaults:
   - _self_
   - task: pusht
-  - model: fast_policy
+  - model: dgm
 
 dataloader:
   batch_size: 32
@@ -28,7 +28,7 @@ training:
   lr_warmup_steps: 1000
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 250  # 完整200个epoch训练
+  num_epochs: 200 
   resume: true
   rollout_every: 1
   sample_every: 5
@@ -58,7 +58,7 @@ ema:
 logging:
   group: null
   id: null
-  mode: offline  # 改为offline模式，避免wandb API key问题
+  mode: online 
   name: train_uva_pusht_mlp_bayesian_production
   project: unified_video_action
   resume: false
@@ -75,7 +75,7 @@ multi_run:
 
 payload: ./checkpoints/pusht.ckpt
 freeze_submodules: true
-strict_loading: false  # 允许忽略不匹配的层
+strict_loading: false 
 
 save_folder: ./logs/time_logs/pusht_mlp_ucgm_few_steps_sample_4
 
@@ -83,12 +83,12 @@ save_folder: ./logs/time_logs/pusht_mlp_ucgm_few_steps_sample_4
 bayesian_optimization:
   enabled: true
   optimization_mode: "balanced"  # speed_priority, performance_priority, or balanced
-  start_epoch: 190  # 从75%位置开始（200*3/4=150），确保训练稳定性
-  interval: 20      # 每10个epoch优化一次
-  max_trials: 10    # 中期优化用15个trials
-  final_trials: 15  # 最终优化用20个trials
-  n_test: 5         # 正常优化用5个test
-  final_n_test: 8   # 最终优化用8个test，更充分的评估
+  start_epoch: 140  
+  interval: 20      
+  max_trials: 10   
+  final_trials: 15 
+  n_test: 5      
+  final_n_test: 8 
   device: cuda:0
   output_dir: ./bayesian_optimization_logs
-  use_best_checkpoint_for_final: true  # 最终优化使用最优checkpoint
+  use_best_checkpoint_for_final: true

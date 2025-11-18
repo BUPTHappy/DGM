@@ -6,7 +6,7 @@ from unified_video_action.model.autoregressive.diffusion import create_diffusion
 from unified_video_action.model.ucgm.ucgm import UCGMTS
 
 
-class DiffLossUCGM(nn.Module):
+class DiffLossDGM(nn.Module):
     """Diffusion Loss"""
 
     def __init__(
@@ -19,7 +19,7 @@ class DiffLossUCGM(nn.Module):
         grad_checkpointing=False,
         **kwargs
     ):
-        super(DiffLossUCGM, self).__init__()
+        super(DiffLossDGM, self).__init__()
 
         self.n_frames = kwargs["n_frames"]
         self.language_emb_model = kwargs["language_emb_model"]

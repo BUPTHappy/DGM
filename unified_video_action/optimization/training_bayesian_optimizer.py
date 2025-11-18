@@ -1,8 +1,3 @@
-"""
-Training-integrated Bayesian Optimizer for UCGM parameters.
-This module integrates Bayesian optimization into the training loop,
-allowing for adaptive hyperparameter optimization during training.
-"""
 
 import os
 import json
@@ -13,7 +8,7 @@ import dill
 import numpy as np
 from typing import Dict, Any, Optional, Tuple
 from omegaconf import OmegaConf, open_dict
-from unified_video_action.optimization.bayesian_optimizer import UCGMBayesianOptimizer
+from unified_video_action.optimization.bayesian_optimizer import DGMBayesianOptimizer
 
 
 class TrainingBayesianOptimizer:
@@ -76,7 +71,7 @@ class TrainingBayesianOptimizer:
         self.best_score = -float('inf')
         
         # Initialize optimizer
-        self.optimizer = UCGMBayesianOptimizer(max_trials=max_trials)
+        self.optimizer = DGMBayesianOptimizer(max_trials=max_trials)
         
         print(f"TrainingBayesianOptimizer initialized:")
         print(f"  Start epoch: {start_epoch}")
@@ -126,11 +121,7 @@ class TrainingBayesianOptimizer:
             # Set test count
             if "libero" in cfg.task.name:
                 cfg.task.env_runner.n_test = self.n_test
-                # For libero10, each task needs more time (10 tasks * n_test * max_steps)
-                # Estimate: ~30-60 seconds per test per task depending on complexity
-                # Calculate timeout with buffer: at least 20 minutes, scale with n_test
-                # Formula: base_time (20 min) + n_test * tasks * time_per_test
-                timeout = max(1200, self.n_test * 60 * 10)  # At least 20 minutes, scale with n_test
+                timeout = max(1200, self.n_test * 60 * 10)  
             else:
                 cfg.task.env_runner.n_test = min(self.n_test * 5, 50)
                 timeout = 300  # 5 minutes for other tasks
@@ -454,7 +445,7 @@ class TrainingBayesianOptimizer:
             print(f"Normal phase: max_trials={max_trials}, n_test={n_test}")
         
         # Create a temporary optimizer with adjusted parameters and mode-specific ranges
-        temp_optimizer = UCGMBayesianOptimizer(max_trials=max_trials, optimization_mode=self.optimization_mode)
+        temp_optimizer = DGMBayesianOptimizer(max_trials=max_trials, optimization_mode=self.optimization_mode)
         
         def objective_function(params):
             return self.evaluate_model_with_params(params, checkpoint_path)

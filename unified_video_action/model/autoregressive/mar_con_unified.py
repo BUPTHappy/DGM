@@ -13,9 +13,8 @@ from torch.utils.checkpoint import checkpoint
 from unified_video_action.model import tome
 from timm.models.vision_transformer import Block
 from unified_video_action.model.autoregressive.diffusion_loss import DiffLoss
-from unified_video_action.model.autoregressive.diffusion_loss_ucgm import DiffLossUCGM
+from unified_video_action.model.autoregressive.diffusion_loss_dgm import DiffLossDGM
 from unified_video_action.model.autoregressive.diffusion_action_loss import DiffActLoss
-from unified_video_action.model.autoregressive.diffusion_action_loss_ucgm import DiffActLossUCGM
 
 class LocalCausalTransformerBlock(nn.Module):
     """Transformer block with local causal attention window mechanism"""
@@ -420,7 +419,7 @@ class MAR(nn.Module):
         # ========= Video Diffusion Loss =========
         self.predict_video = predict_video
 
-        diffloss_options = {False: DiffLoss, True: DiffLossUCGM}
+        diffloss_options = {False: DiffLoss, True: DiffLossDGM}
         # DiffActLoss now always uses UCGM, so we don't need to choose based on use_ucgm
         diffactloss_class = DiffActLoss
 
@@ -886,17 +885,13 @@ class MAR(nn.Module):
         local_features = self.local_causal_encoder_norm(local_x)
 
         # ========= Feature Fusion =========
-        # 现在使用真正的local attention特征进行融合
         lambda_local = self.lambda_local
         
-        # 残差连接：global_features + small_adjustment
         adjustment = self.feature_fusion(
             torch.cat([global_features, local_features], dim=-1)
         )
-        
-        # 使用很小的权重来避免破坏原始特征
-        fused_x = global_features + lambda_local * adjustment
 
+        fused_x = global_features + lambda_local * adjustment
         return fused_x
 
     def forward_mae_decoder(self, x, mask):

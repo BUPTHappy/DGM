@@ -3,7 +3,7 @@ name: uva
 defaults:
   - _self_
   - task: libero10
-  - model: fast_policy_dit_hybrid
+  - model: dgm
 
 dataloader:
   batch_size: 32
@@ -20,7 +20,7 @@ val_dataloader:
   shuffle: false
 
 training:
-  checkpoint_every: 50
+  checkpoint_every: 10
   debug: false
   device: cuda:0
   gradient_accumulate_every: 1
@@ -28,16 +28,15 @@ training:
   lr_warmup_steps: 1000
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 3050
+  num_epochs: 200 
   resume: true
-  rollout_every: 50
+  rollout_every: 10
   sample_every: 5
   seed: 42
   tqdm_interval_sec: 1.0
   use_ema: true
   val_every: 1
-  mixed_precision: 'fp16' # fp16
-  profile: false
+  mixed_precision: 'fp16'
   
 checkpoint:
   save_last_ckpt: true
@@ -59,21 +58,37 @@ ema:
 logging:
   group: null
   id: null
-  mode: online
-  name: train_uva_libero10
+  mode: online  
+  name: train_uva_libero10_mlp_bayesian_production
   project: unified_video_action
   resume: false
   tags:
   - train_uva_libero10
   - libero10
-  - default
-
-payload: checkpoints/libero10.ckpt
-
-freeze_submodules: true
+  - mlp
+  - bayesian_optimization
+  - production
 
 multi_run:
-  run_dir: data/outputs/train_uva_libero10
-  wandb_name_base: train_uva_libero10
+  run_dir: data/outputs/train_uva_libero10_mlp_bayesian_production_resume
+  wandb_name_base: train_uva_libero10_mlp_bayesian_production_resume
 
-save_folder : profiling/ucgm_dit_vs_mlp/dit.txt
+payload: ./checkpoints/libero10.ckpt
+freeze_submodules: true
+strict_loading: false  
+
+save_folder: ./logs/time_logs/libero10_mlp_ucgm_few_steps_sample_4
+
+# Bayesian Optimization Configuration for Production
+bayesian_optimization:
+  enabled: true
+  optimization_mode: "balanced"  # speed_priority, performance_priority, or balanced
+  start_epoch: 140  
+  interval: 10      
+  max_trials: 10    
+  final_trials: 15  
+  n_test: 5         
+  final_n_test: 8  
+  device: cuda:0
+  output_dir: ./bayesian_optimization_logs
+  use_best_checkpoint_for_final: true  
