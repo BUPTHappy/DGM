@@ -4,7 +4,9 @@
 
 ## Abstract
 
+
 We present **Dynamic Generative Modeling (DGM)**, a framework that unifies these approaches by treating their behaviors as endpoints of a continuous generative spectrum, which simultaneously achieves high performance and fast inference. Rather than fixing this generative regime a priori, we develop DGM-Opt, a bi-level optimization algorithm that jointly learns policy weights and generative hyperparameters. Meanwhile, DGM enhances a Transformer-based visuomotor backbone with frame-wise local causal attention to maintain spatio-temporal coherence essential for embodied motion.
+
 ---
 
 ## Installation
