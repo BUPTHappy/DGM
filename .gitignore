@@ -6,7 +6,6 @@ vis*/
 *.out
 *.mp4
 *.gif
-*.png
 *.jpg
 debug/
 outputs/
