@@ -10,7 +10,7 @@ import subprocess
 import numpy as np
 from typing import Dict, Any
 from omegaconf import OmegaConf, open_dict
-from unified_video_action.optimization.bayesian_optimizer import UCGMBayesianOptimizer
+from unified_video_action.optimization.bayesian_optimizer import DGMBayesianOptimizer
 
 
 def evaluate_model_with_params(params: Dict[str, Any], 
@@ -35,7 +35,7 @@ def evaluate_model_with_params(params: Dict[str, Any],
             cfg.model.policy.autoregressive_model_params.cfg = params['cfg']
             cfg.model.policy.autoregressive_model_params.temperature = params['temperature']
             
-            # 新增的local attention参数
+            # Local attention parameters
             cfg.model.policy.autoregressive_model_params.window_size = params['window_size']
             cfg.model.policy.autoregressive_model_params.lambda_local = params['lambda_local']
             
@@ -139,12 +139,12 @@ def run_bayesian_optimization(checkpoint_path: str,
             n_test=n_test
         )
     
-    optimizer = UCGMBayesianOptimizer(max_trials=max_trials) #创建优化器
+    optimizer = DGMBayesianOptimizer(max_trials=max_trials) 
     
     print(f"Starting Bayesian optimization: {max_trials} trials")
     print(f"Checkpoint: {checkpoint_path}")
     
-    best_params, best_score = optimizer.optimize(objective_function) #优化参数
+    best_params, best_score = optimizer.optimize(objective_function) 
     
     results_file = os.path.join(output_dir, "bayesian_optimization_results.json")
     optimizer.save_results(results_file)

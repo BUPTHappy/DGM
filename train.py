@@ -3,11 +3,6 @@ Usage:
 Training:
 python train.py --config-name=train_diffusion_lowdim_workspace
 
-Training with Bayesian Optimization:
-python train.py --config-name=train_diffusion_lowdim_workspace \
-    bayesian_optimization.enabled=true \
-    bayesian_optimization.start_epoch=100 \
-    bayesian_optimization.interval=10
 """
 # import torch.multiprocessing as mp
 # mp.set_start_method('spawn', force=True)
@@ -90,9 +85,9 @@ def main(cfg: OmegaConf):
     if cfg.payload:
         print(f"Loading checkpoint from: {cfg.payload}")
         payload = torch.load(open(cfg.payload, "rb"), pickle_module=dill)
-        # 从配置文件读取 strict_loading 参数，默认为 False
+        # Read strict_loading parameter from config, default is False
         strict_loading = getattr(cfg, 'strict_loading', False)
-        print(f"strict_loading from config: {strict_loading}")  # 调试信息
+        print(f"strict_loading from config: {strict_loading}")
         
         if cfg.training.use_ema:
             workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=strict_loading)

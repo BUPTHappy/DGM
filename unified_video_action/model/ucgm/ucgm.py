@@ -1,12 +1,7 @@
-# Copyright 2025 Peng Sun
-# Email: sunpeng@westlake.edu.cn
-#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-
-#     http://www.apache.org/licenses/LICENSE-2.0
-
+# You may obtain a copy of the License at apache
+#
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -67,8 +62,6 @@ class UCGMTS(torch.nn.Module):
     It unifies different training and generation paradigms, supporting:
     - Multi-step generation (akin to diffusion models or flow-matching models).
     - Few-step or single-step generation (akin to consistency models).
-
-    Developed by: Peng Sun, email: sunpeng@westlake.edu.cn
     """
 
     def __init__(

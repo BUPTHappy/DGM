@@ -1,21 +1,10 @@
 """Vision Transformer (ViT) in PyTorch
 
 A PyTorch implement of Vision Transformers as described in
-'An Image Is Worth 16 x 16 Words: Transformers for Image Recognition at Scale' - https://arxiv.org/abs/2010.11929
-
-The official jax code is released and available at https://github.com/google-research/vision_transformer
+'An Image Is Worth 16 x 16 Words: Transformers for Image Recognition at Scale'
 
 Acknowledgments:
 * The paper authors for releasing code and weights, thanks!
-* I fixed my class token impl based on Phil Wang's https://github.com/lucidrains/vit-pytorch ... check it out
-for some einops/einsum fun
-* Simple transformer style inspired by Andrej Karpathy's https://github.com/karpathy/minGPT
-* Bert reference code checks against Huggingface Transformers and Tensorflow Bert
-
-DeiT model defs and weights from https://github.com/facebookresearch/deit,
-paper `DeiT: Data-efficient Image Transformers` - https://arxiv.org/abs/2012.12877
-
-Hacked together by / Copyright 2020 Ross Wightman
 """
 
 import math
@@ -573,8 +562,7 @@ class PredictorLG(nn.Module):
 class VisionTransformerDiffPruning(nn.Module):
     """Vision Transformer
 
-    A PyTorch impl of : `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale`  -
-        https://arxiv.org/abs/2010.11929
+    A PyTorch impl of : `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale` 
     """
 
     def __init__(
@@ -799,8 +787,7 @@ class VisionTransformerDiffPruning(nn.Module):
 class VisionTransformerTeacher(nn.Module):
     """Vision Transformer
 
-    A PyTorch impl of : `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale`  -
-        https://arxiv.org/abs/2010.11929
+    A PyTorch impl of : `An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale` 
     """
 
     def __init__(
@@ -961,8 +948,7 @@ class VisionTransformerTeacher(nn.Module):
 
 
 def resize_pos_embed(posemb, posemb_new):
-    # Rescale the grid of position embeddings when loading from state_dict. Adapted from
-    # https://github.com/google-research/vision_transformer/blob/00883dd691c63a6830751563748663526e811cee/vit_jax/checkpoint.py#L224
+    # Rescale the grid of position embeddings when loading from state_dict.
     _logger.info("Resized position embedding: %s to %s", posemb.shape, posemb_new.shape)
     ntok_new = posemb_new.shape[1]
     if True:

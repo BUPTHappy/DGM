@@ -28,7 +28,7 @@ from unified_video_action.policy.unified_video_action_policy import (
     UnifiedVideoActionPolicy,
 )
 from unified_video_action.dataset.base_dataset import BaseImageDataset
-from unified_video_action.dataset.umi_multi_dataset import UmiMultiDataset
+# from unified_video_action.dataset.umi_multi_dataset import UmiMultiDataset  # Removed: umi dataset not used
 from unified_video_action.common.checkpoint_util import TopKCheckpointManager
 from unified_video_action.common.pytorch_util import dict_apply
 from unified_video_action.model.autoregressive.ema_model import EMAModel
@@ -216,20 +216,10 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
             )
 
         if cfg.task.task_type == "multiple_datasets":
-            dataset: UmiMultiDataset
-            dataset = hydra.utils.instantiate(cfg.task.dataset)
-            train_dataloader = dataset.get_dataloader()
-            val_dataset = dataset.split_unused_episodes()
-            val_dataloader = val_dataset.get_dataloader()
-            dataset.set_datasets_attribute("random_img_sampling", True)
-            print(
-                "train dataset:",
-                len(dataset),
-                "train dataloader:",
-                len(train_dataloader),
-            )
-            print(
-                "val dataset:", len(val_dataset), "val dataloader:", len(val_dataloader)
+            # Removed: umi multi-dataset support not used for pusht/libero10
+            raise NotImplementedError(
+                "multiple_datasets task_type is not supported. "
+                "This feature was removed along with umi dataset support."
             )
         else:
             # configure dataset

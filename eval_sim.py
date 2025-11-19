@@ -103,7 +103,7 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
             else:
                 cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
         
-        # 处理local attention参数
+        # Handle local attention parameters
         if window_size is not None:
             cfg.model.policy.autoregressive_model_params.window_size = window_size
         if lambda_local is not None:

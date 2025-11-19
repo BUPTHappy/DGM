@@ -10,7 +10,6 @@ import gdown
 
 
 class Logger(object):
-    """Reference: https://gist.github.com/gyglim/1f8dfb1b5c82627ae3efcfbbadb9f514"""
 
     def __init__(self, fn, eval, ask=True):
         if not os.path.exists("./results/"):

@@ -1,8 +1,3 @@
-# Modified from OpenAI's diffusion repos
-#     GLIDE: https://github.com/openai/glide-text2im/blob/main/glide_text2im/gaussian_diffusion.py
-#     ADM:   https://github.com/openai/guided-diffusion/blob/main/guided_diffusion
-#     IDDPM: https://github.com/openai/improved-diffusion/blob/main/improved_diffusion/gaussian_diffusion.py
-
 
 import math
 
@@ -146,13 +141,6 @@ def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
 
 
 class GaussianDiffusion:
-    """
-    Utilities for training and sampling diffusion models.
-    Original ported from this codebase:
-    https://github.com/hojonathanho/diffusion/blob/1e0dceb3b3495bbe19116a5e1b3596cd0706c543/diffusion_tf/diffusion_utils_2.py#L42
-    :param betas: a 1-D numpy array of betas for each diffusion timestep,
-                  starting at T and going to 1.
-    """
 
     def __init__(self, *, betas, model_mean_type, model_var_type, loss_type):
 

@@ -305,7 +305,7 @@ class TrainingBayesianOptimizer:
                 # Estimate: ~30-60 seconds per test per task depending on complexity
                 # Calculate timeout with buffer: at least 20 minutes, scale with n_test
                 # Formula: base_time (20 min) + n_test * tasks * time_per_test
-                timeout = max(1200, self.n_test * 60 * 10)  # At least 20 minutes, scale with n_test
+                timeout = max(1200, self.n_test * 60 * 10) 
             else:
                 cfg.task.env_runner.n_test = min(self.n_test * 5, 50)
                 timeout = 300  # 5 minutes for other tasks

@@ -1,4 +1,4 @@
-# Adopted from LDM's KL-VAE: https://github.com/CompVis/latent-diffusion
+# Adopted from LDM's KL-VAE
 import torch
 import torch.nn as nn
 

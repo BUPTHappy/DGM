@@ -78,7 +78,6 @@ class DiffLossDGM(nn.Module):
     def sample(self, z, temperature=1.0, cfg=1.0, text_latents=None):
         noise = torch.randn(z.shape[0], self.in_channels).cuda()
         model_kwargs = dict(c=z)
-        # hyperparameters from https://github.com/LINs-lab/UCGM/blob/main/configs/training_few_steps/in1k256_tit_xl_repae.yaml
 
         if self.num_sampling_steps == 'few':
             return self.ucgmts.uni_sample(
@@ -138,7 +137,6 @@ class TimestepEmbedder(nn.Module):
         :param max_period: controls the minimum frequency of the embeddings.
         :return: an (N, D) Tensor of positional embeddings.
         """
-        # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
         half = dim // 2
         freqs = torch.exp(
             -math.log(max_period)

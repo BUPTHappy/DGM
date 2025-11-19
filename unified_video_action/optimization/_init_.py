@@ -1,3 +1,3 @@
-from .bayesian_optimizer import UCGMBayesianOptimizer
+from .bayesian_optimizer import DGMBayesianOptimizer
 
-__all__ = ['UCGMBayesianOptimizer']
+__all__ = ['DGMBayesianOptimizer']

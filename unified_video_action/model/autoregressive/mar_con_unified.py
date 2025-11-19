@@ -336,8 +336,6 @@ class MAR(nn.Module):
         
         # ========= Feature Fusion =========
         self.feature_fusion = nn.Linear(encoder_embed_dim * 2, encoder_embed_dim)
-        
-        # 使用简单的λ参数控制特征融合权重，避免训练门控网络
         self.lambda_local = lambda_local 
 
         # ========= Decoder =========
@@ -413,7 +411,7 @@ class MAR(nn.Module):
 
         # ========= Initialize Weights =========
         self.initialize_weights()
-        self.copy_encoder_parameters() #复制训练好的参数到local causal blocks
+        self.copy_encoder_parameters()  # Copy trained parameters to local causal blocks
         self.initialize_fusion_weights()
 
         # ========= Video Diffusion Loss =========
@@ -583,7 +581,7 @@ class MAR(nn.Module):
     
     def initialize_fusion_weights(self):
         """Initialize only the fusion network weights, preserving copied parameters"""
-        # 只初始化融合网络的参数
+        # Initialize only the fusion network parameters
         for m in self.feature_fusion.modules():
             if isinstance(m, nn.Linear):
                 torch.nn.init.xavier_uniform_(m.weight)

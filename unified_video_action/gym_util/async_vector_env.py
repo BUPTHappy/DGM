@@ -565,7 +565,7 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
             try:
                 command, data = pipe.recv()
             except (EOFError, BrokenPipeError, OSError):
-                # 管道已断开，退出循环
+                # Pipe disconnected, exit loop
                 break
             if command == "reset":
                 observation = env.reset()
@@ -611,7 +611,7 @@ def _worker(index, env_fn, pipe, parent_pipe, shared_memory, error_queue):
         try:
             pipe.send((None, False))
         except (BrokenPipeError, OSError):
-            # 管道已断开，忽略错误
+            # Pipe disconnected, ignore error
             pass
     finally:
         env.close()
@@ -627,7 +627,7 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
             try:
                 command, data = pipe.recv()
             except (EOFError, BrokenPipeError, OSError):
-                # 管道已断开，退出循环
+                # Pipe disconnected, exit loop
                 break
             if command == "reset":
                 observation = env.reset()
@@ -678,7 +678,7 @@ def _worker_shared_memory(index, env_fn, pipe, parent_pipe, shared_memory, error
         try:
             pipe.send((None, False))
         except (BrokenPipeError, OSError):
-            # 管道已断开，忽略错误
+            # Pipe disconnected, ignore error
             pass
     finally:
         env.close()
