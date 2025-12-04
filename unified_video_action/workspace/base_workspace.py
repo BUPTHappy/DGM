@@ -136,6 +136,11 @@ class BaseWorkspace:
                     print(f"Loading {key}")
                     print(f"kwargs: {kwargs}")  
                     
+                    # Skip if key doesn't exist in workspace (e.g., ema_model when use_ema=false)
+                    if key not in self.__dict__ or self.__dict__[key] is None:
+                        print(f"Skipping {key} (not initialized in workspace)")
+                        continue
+                    
                     if not kwargs.get('strict', True):
                         model_state = self.__dict__[key].state_dict()
                         filtered_value_new = {}
