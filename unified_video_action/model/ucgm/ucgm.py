@@ -80,6 +80,7 @@ class UCGMTS(torch.nn.Module):
         scaled_cbl_eps: float = 0.0,
         wt_cosine_loss: bool = False,
         weight_funcion: str = None,
+        prediction_mode: str = "transport", # [x-pred]这样我们可以选择transport或者x_pred
         # --- Time Discretization & Distribution ---
         time_dist_ctrl: list = [1.0, 1.0, 1.0],
     ):
@@ -139,6 +140,11 @@ class UCGMTS(torch.nn.Module):
                 Defaults to None.
                 (Note: Original parameter name in code might be 'weight_funcion' due to a typo)
 
+            [x-pred] prediction_mode (str, optional): Specifies the prediction mode. 
+                - "transport": Standard transport field prediction (default).
+                - "x_pred": Direct x-prediction mode, where model predicts clean data x.
+                Defaults to "transport".
+
             time_dist_ctrl (list[float], optional): Parameters to control the
                 distribution of time steps sampled during training. The interpretation
                 depends on the specific sampling strategy implemented.
@@ -158,6 +164,7 @@ class UCGMTS(torch.nn.Module):
         self.tdc = time_dist_ctrl
         self.wcl = wt_cosine_loss
         self.lwf = weight_funcion
+        self.prediction_mode = prediction_mode  #[x-pred]
 
         if self.enr >= 1.0 and self.cor == 0.0:
             self.enr = (self.enr - 1.0) / self.enr
@@ -193,9 +200,21 @@ class UCGMTS(torch.nn.Module):
         dent = self.alpha_in(t) * self.gamma_to(t) - self.gamma_in(t) * self.alpha_to(t)
         _t = torch.ones(x_t.size(0), device=x_t.device) * (t).flatten()
         F_t = model((x_t), _t, **model_kwargs)
-        z_hat = (x_t * self.gamma_to(t) - F_t * self.gamma_in(t)) / dent
-        x_hat = (F_t * self.alpha_in(t) - x_t * self.alpha_to(t)) / dent
-        return x_hat, z_hat, F_t, dent
+
+        #[x-pred] 添加x-pred模式的预测支持
+        if self.prediction_mode == "x_pred":
+            x_pred = F_t
+            gamma_t = self.gamma_in(t)
+            gamma_t = torch.clamp(gamma_t, min=1e-8)
+            # 在 x-pred 模式下，x_hat = x_pred, z_hat 可以设为 v_pred（或计算出来）
+            v_pred = (x_pred - x_t) / gamma_t
+            z_hat = v_pred
+            return x_pred, z_hat, F_t, dent
+        else:
+            #原来的transport模式的逻辑
+            z_hat = (x_t * self.gamma_to(t) - F_t * self.gamma_in(t)) / dent
+            x_hat = (F_t * self.alpha_in(t) - x_t * self.alpha_to(t)) / dent
+            return x_hat, z_hat, F_t, dent
 
     def loss_func(self, pd, pd_hat):
         loss = torch.sqrt(mean_flat((pd - pd_hat) ** 2) + self.huc**2) - self.huc
@@ -231,6 +250,24 @@ class UCGMTS(torch.nn.Module):
         x_wc_t, z_wc_t, F_th_t, den_t = self.forward(model, x_t, t, **dict(c=c))
         xs_target, zs_target, target = x, z, z * self.alpha_to(t) + x * self.gamma_to(t)
 
+        #[x-pred] 添加x-pred模式的逻辑
+        if self.prediction_mode == "x_pred":
+            #按照JiT, x-prediction计算v-loss
+            x_pred = F_th_t
+            gamma_t = self.gamma_in(t)
+            gamma_t = torch.clamp(gamma_t, min=1e-8)
+            v_pred = (x_pred - x_t) / gamma_t
+            v_target = (x-x_t) / gamma_t
+            
+            loss = self.loss_func(v_pred, v_target)
+            if self.lwf is None:
+                return loss
+            elif self.lwf == "Cosine":
+                return loss * torch.cos(t * 1.57).flatten()
+            else:
+                return loss
+
+        # 原有的transport模式的逻辑
         with torch.no_grad():
             if self.cor != 0.0 or self.enr != 0.0:
                 if self.emd > 0.0 and self.emd < 1.0:
@@ -401,49 +438,86 @@ class UCGMTS(torch.nn.Module):
                 t_cur.to(torch.float32),
                 **model_kwargs,
             )
-            samples.append(x_hat)
             x_hat, z_hat = x_hat.to(torch.float64), z_hat.to(torch.float64)
+            
+            # [x-pred] 在x-pred模式下
+            if self.prediction_mode == "x_pred":
+                #x_hat 是模型预测的干净数据x_pred
+                #v_hat 是v_pred=(x_pred - x_cur) / gamma_in(t_cur)
+                x_pred = x_hat
+                gamma_cur = self.gamma_in(t_cur)
+                gamma_cur = torch.clamp(gamma_cur, min=1e-8)
+                v_pred = (x_pred - x_cur) / gamma_cur
 
-            # Apply extrapolation for prediction (x is not nessary?).
-            if buffer_freq > 0 and extrapol_ratio > 0:
-                z_hats.append(z_hat)
-                x_hats.append(x_hat)
-                if i > buffer_freq:
-                    z_hat = z_hat + extrapol_ratio * (z_hat - z_hats[-buffer_freq - 1])
-                    x_hat = x_hat + extrapol_ratio * (x_hat - x_hats[-buffer_freq - 1])
-                    z_hats.pop(0), x_hats.pop(0)
+                # Euler step:
+                dt = (t_next - t_cur).to(torch.float64)
+                x_next = x_cur + dt * v_pred
 
-            if stochast_ratio == "Auto":
-                stochast_ratio = (
-                    torch.sqrt((t_next - t_cur).abs())
-                    * torch.sqrt(2 * self.alpha_in(t_cur))
-                    / self.alpha_in(t_next)
+                if sampling_order == 2 and i < num_steps - 1:
+                    # Heun's method: 先用 Euler 预测，再用预测值计算修正
+                    x_next_euler = x_next
+                    x_hat_next, z_hat_next, _, _ = self.forward(
+                        sampling_model,
+                        x_next_euler.to(torch.float32),
+                        t_next.to(torch.float32),
+                        **model_kwargs,
+                    )
+                    x_hat_next = x_hat_next.to(torch.float64)
+                    gamma_next = self.gamma_in(t_next)
+                    gamma_next = torch.clamp(gamma_next, min=1e-8)
+                    v_pred_next = (x_hat_next - x_next_euler) / gamma_next
+                   
+                    #使用平均速度
+                    v_pred_avg = 0.5 * (v_pred + v_pred_next)
+                    x_next = x_cur + dt * v_pred_avg
+            else:
+                # Apply extrapolation for prediction (x is not nessary?).
+                if buffer_freq > 0 and extrapol_ratio > 0:
+                    z_hats.append(z_hat)
+                    x_hats.append(x_hat)
+                    if i > buffer_freq:
+                        z_hat = z_hat + extrapol_ratio * (z_hat - z_hats[-buffer_freq - 1])
+                        x_hat = x_hat + extrapol_ratio * (x_hat - x_hats[-buffer_freq - 1])
+                        z_hats.pop(0), x_hats.pop(0)
+
+                if stochast_ratio == "Auto":
+                    stochast_ratio = (
+                        torch.sqrt((t_next - t_cur).abs())
+                        * torch.sqrt(2 * self.alpha_in(t_cur))
+                        / self.alpha_in(t_next)
+                    )
+                    stochast_ratio = torch.clamp(stochast_ratio ** (1 / 0.5), min=0, max=1)
+
+                x_next = self.gamma_in(t_next) * x_hat + self.alpha_in(t_next) * (
+                    z_hat * ((1 - stochast_ratio) ** 0.5)
+                    + torch.randn(x_cur.size()).to(x_cur) * (stochast_ratio**0.5)
                 )
-                stochast_ratio = torch.clamp(stochast_ratio ** (1 / 0.5), min=0, max=1)
 
-            x_next = self.gamma_in(t_next) * x_hat + self.alpha_in(t_next) * (
-                z_hat * ((1 - stochast_ratio) ** 0.5)
-                + torch.randn(x_cur.size()).to(x_cur) * (stochast_ratio**0.5)
-            )
+                # Apply second order correction.
+                if sampling_order == 2 and i < num_steps - 1:
+                    x_pri, z_pri, _, _ = self.forward(
+                        sampling_model,
+                        x_next.to(torch.float32),
+                        t_next.to(torch.float32),
+                        **model_kwargs,
+                    )
+                    x_pri, z_pri = x_pri.to(torch.float64), z_pri.to(torch.float64)
 
-            # Apply second order correction.
-            if sampling_order == 2 and i < num_steps - 1:
-                x_pri, z_pri, _, _ = self.forward(
-                    sampling_model,
-                    x_next.to(torch.float32),
-                    t_next.to(torch.float32),
-                    **model_kwargs,
-                )
-                x_pri, z_pri = x_pri.to(torch.float64), z_pri.to(torch.float64)
-
-                x_next = x_cur * self.gamma_in(t_next) / self.gamma_in(t_cur) + (
-                    self.alpha_in(t_next)
-                    - self.gamma_in(t_next)
-                    * self.alpha_in(t_cur)
-                    / self.gamma_in(t_cur)
-                ) * (0.5 * z_hat + 0.5 * z_pri)
+                    x_next = x_cur * self.gamma_in(t_next) / self.gamma_in(t_cur) + (
+                        self.alpha_in(t_next)
+                        - self.gamma_in(t_next)
+                        * self.alpha_in(t_cur)
+                        / self.gamma_in(t_cur)
+                    ) * (0.5 * z_hat + 0.5 * z_pri)
+                
+                # transport 模式下记录预测值
+                samples.append(x_hat.to(torch.float32))
 
             x_cur = x_next
+            
+            # [x-pred] 在 x-pred 模式下，更新后记录实际采样状态
+            if self.prediction_mode == "x_pred":
+                samples.append(x_cur.clone().to(torch.float32))
 
         return torch.stack(samples, dim=0).to(torch.float32)
     

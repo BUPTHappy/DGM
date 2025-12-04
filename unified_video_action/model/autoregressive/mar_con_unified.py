@@ -151,6 +151,7 @@ class MAR(nn.Module):
         ucgmts_config={},
         window_size=15,
         lambda_local=0.1,
+        prediction_mode="transport",  # [x-pred] prediction mode: "transport" or "x_pred"
         **kwargs,
     ):
         super().__init__()
@@ -434,6 +435,7 @@ class MAR(nn.Module):
                 depth=diffloss_d,
                 num_sampling_steps=num_sampling_steps,
                 grad_checkpointing=grad_checkpointing,
+                prediction_mode=prediction_mode,  # [x-pred] pass prediction_mode
                 n_frames=self.n_frames,
                 language_emb_model=self.language_emb_model,
                 language_emb_model_type=self.language_emb_model_type,
@@ -448,6 +450,7 @@ class MAR(nn.Module):
                     depth=diffloss_d,
                     num_sampling_steps=num_sampling_steps,
                     grad_checkpointing=grad_checkpointing,
+                    prediction_mode=prediction_mode,  # [x-pred] pass prediction_mode
                     n_frames=self.n_frames,
                     language_emb_model=self.language_emb_model,
                     language_emb_model_type=self.language_emb_model_type,

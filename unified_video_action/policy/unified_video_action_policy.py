@@ -93,6 +93,9 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
 
 
         ## =========================== main model ===========================
+        # [x-pred] Get prediction_mode from config, default to "transport"
+        prediction_mode = getattr(autoregressive_model_params, 'prediction_mode', 'transport')
+        
         self.model = mar.__dict__[autoregressive_model_params.model_size](
             img_size=autoregressive_model_params.img_size,
             vae_stride=autoregressive_model_params.vae_stride,
@@ -119,6 +122,7 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
             predict_wrist_img=kwargs["predict_wrist_img"],
             different_history_freq=kwargs["different_history_freq"],
             predict_proprioception=kwargs["predict_proprioception"],
+            prediction_mode=prediction_mode,  # [x-pred] pass prediction_mode
             task_name=self.task_name,
             language_emb_model=language_emb_model,
             shape_meta=shape_meta,

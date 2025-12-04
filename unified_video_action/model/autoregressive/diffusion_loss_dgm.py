@@ -17,6 +17,7 @@ class DiffLossDGM(nn.Module):
         width,
         num_sampling_steps,
         grad_checkpointing=False,
+        prediction_mode: str = "transport", #[x-pred] 添加这个可选参数
         **kwargs
     ):
         super(DiffLossDGM, self).__init__()
@@ -45,15 +46,19 @@ class DiffLossDGM(nn.Module):
                     ema_decay_rate=0.0,
                     enhanced_range=[0.0, 0.75], # removed these for the other
                     time_dist_ctrl=[0.8, 1.0, 1.0], # removed these for the other
-                    weight_funcion="Cosine" # removed these for the other
+                    weight_funcion="Cosine", # removed these for the other
+                    prediction_mode=prediction_mode, #[x-pred]
                 )
         elif num_sampling_steps == "sample_only":
             self.ucgmts = UCGMTS(
-                transport_type="TrigFlow"
+                transport_type="TrigFlow",
+                prediction_mode=prediction_mode, #[x-pred]
             )
         else:
             self.ucgmts = UCGMTS(
-                transport_type="TrigFlow",)
+                transport_type="TrigFlow",
+                prediction_mode=prediction_mode, #[x-pred]
+                )
        
 
     def forward(self, target, z, mask=None, conf_score=None, text_latents=None):
