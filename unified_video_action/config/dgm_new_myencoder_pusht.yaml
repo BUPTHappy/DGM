@@ -59,8 +59,8 @@ logging:
   group: null
   id: null
   mode: online 
-  name: train_uva_pusht_cnn_encoder  # Updated name for CNN encoder
-  project: unified_video_action
+  name: train_DHM_pusht_cnn_encoder  # Updated name for CNN encoder
+  project: DGM
   resume: false
   tags:
   - train_uva_pusht
@@ -75,15 +75,9 @@ multi_run:
 
 # Option 1: Start from scratch (recommended for initial CNN encoder training)
 # Only load pretrained Transformer weights via pretrained_model_path in model config
-payload: null  # Don't load full model checkpoint, start fresh
+payload: ./checkpoints/pusht_dgm.ckpt  # Don't load full model checkpoint, start fresh
 freeze_submodules: true  # Freeze Transformer, train only CNN encoder
 strict_loading: false 
-
-# Option 2: If you want to load from a VAE-trained checkpoint
-# The encoder part will be skipped (due to strict_loading=false), but Transformer weights will load
-# payload: ./checkpoints/pusht.ckpt
-# freeze_submodules: true
-# strict_loading: false  # This allows skipping mismatched encoder weights
 
 save_folder: ./logs/time_logs/pusht_cnn_encoder
 
@@ -91,7 +85,7 @@ save_folder: ./logs/time_logs/pusht_cnn_encoder
 bayesian_optimization:
   enabled: false
   optimization_mode: "balanced"
-  start_epoch: 140  
+  start_epoch: 200  
   interval: 20      
   max_trials: 10   
   final_trials: 15 
