@@ -77,7 +77,19 @@ multi_run:
 # Only load pretrained Transformer weights via pretrained_model_path in model config
 payload: ./checkpoints/pusht.ckpt  # Don't load full model checkpoint, start fresh
 freeze_submodules: true  # Freeze Transformer, train only CNN encoder
-strict_loading: false 
+strict_loading: false
+
+# Training stage for CNN encoder:
+#   stage1: Train encoder + action diffusion head only (Transformer frozen)
+#           - Use this initially to let encoder learn good features
+#           - Recommended: 50-100 epochs
+#   stage2: Train encoder + action head + Transformer (video head frozen)
+#           - Let Transformer adapt to new encoder features
+#           - Recommended: 50-100 epochs after stage1
+#   stage3: Full end-to-end training (all components trainable)
+#           - Fine-tune everything together
+#           - Recommended: 50-100 epochs after stage2
+training_stage: "stage1"  # Options: "stage1", "stage2", "stage3" 
 
 save_folder: ./logs/time_logs/pusht_cnn_encoder
 

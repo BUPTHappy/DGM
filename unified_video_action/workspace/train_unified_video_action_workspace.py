@@ -131,37 +131,80 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
         from unified_video_action.encoder.policy_image_encoder import PolicyImageEncoder
         is_cnn_encoder = isinstance(self.model.vae_model, PolicyImageEncoder)
 
+        # Get training stage from config (default: "stage1" - encoder + action head only)
+        # Options: "stage1" (encoder + action head), "stage2" (+ transformer), "stage3" (full end-to-end)
+        training_stage = getattr(self.cfg, "training_stage", "stage1")
+
         if self.cfg.training.use_ema:
             models = [self.model, self.ema_model]
         else:
             models = [self.model]
 
         for model in models:
-            # Freeze everything
-            model.model.eval()
-            for param in model.model.parameters():
-                param.requires_grad = False
-            print(f"Model type: {type(model.model)}")
-            
             if is_cnn_encoder:
-                # CNN encoder: keep it trainable
-                model.vae_model.train()  # Set to training mode
+                # CNN encoder: always trainable
+                model.vae_model.train()
                 for param in model.vae_model.parameters():
                     param.requires_grad = True
                 print("Using CNN encoder - keeping encoder trainable")
                 
-                # For CNN encoder training, freeze all diffusion heads
-                # Only train the encoder, keep Transformer and diffusion heads frozen
-                if hasattr(model.model, "diffloss"):
-                    model.model.diffloss.eval()
-                    for param in model.model.diffloss.parameters():
+                # Stage-based training strategy
+                if training_stage == "stage1":
+                    # Stage 1: Train encoder + action diffusion head only
+                    # Transformer and video head remain frozen
+                    model.model.eval()
+                    for param in model.model.parameters():
                         param.requires_grad = False
-                    print("Freezing diffloss (video diffusion head)")
-                if hasattr(model.model, "diffactloss"):
-                    model.model.diffactloss.eval()
-                    for param in model.model.diffactloss.parameters():
-                        param.requires_grad = False
-                    print("Freezing diffactloss (action diffusion head)")
+                    
+                    if hasattr(model.model, "diffloss"):
+                        model.model.diffloss.eval()
+                        for param in model.model.diffloss.parameters():
+                            param.requires_grad = False
+                        print("Stage 1: Freezing Transformer and diffloss (video diffusion head)")
+                    
+                    if hasattr(model.model, "diffactloss"):
+                        model.model.diffactloss.train()
+                        for param in model.model.diffactloss.parameters():
+                            param.requires_grad = True
+                        print("Stage 1: Training encoder + diffactloss (action diffusion head)")
+                
+                elif training_stage == "stage2":
+                    # Stage 2: Train encoder + action head + Transformer
+                    # Video head remains frozen (not needed for policy_model mode)
+                    model.model.train()
+                    for param in model.model.parameters():
+                        param.requires_grad = True
+                    
+                    if hasattr(model.model, "diffloss"):
+                        model.model.diffloss.eval()
+                        for param in model.model.diffloss.parameters():
+                            param.requires_grad = False
+                        print("Stage 2: Training encoder + Transformer + diffactloss")
+                        print("Stage 2: Freezing diffloss (video diffusion head)")
+                    
+                    if hasattr(model.model, "diffactloss"):
+                        model.model.diffactloss.train()
+                        for param in model.model.diffactloss.parameters():
+                            param.requires_grad = True
+                
+                elif training_stage == "stage3":
+                    # Stage 3: Full end-to-end training (all components)
+                    model.model.train()
+                    for param in model.model.parameters():
+                        param.requires_grad = True
+                    
+                    if hasattr(model.model, "diffloss"):
+                        model.model.diffloss.train()
+                        for param in model.model.diffloss.parameters():
+                            param.requires_grad = True
+                        print("Stage 3: Full end-to-end training (encoder + Transformer + all diffusion heads)")
+                    
+                    if hasattr(model.model, "diffactloss"):
+                        model.model.diffactloss.train()
+                        for param in model.model.diffactloss.parameters():
+                            param.requires_grad = True
+                else:
+                    raise ValueError(f"Unknown training_stage: {training_stage}. Use 'stage1', 'stage2', or 'stage3'")
             else:
                 # VAE encoder: keep it frozen (should already be frozen in __init__)
                 model.vae_model.eval()
