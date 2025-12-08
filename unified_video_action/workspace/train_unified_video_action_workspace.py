@@ -415,19 +415,16 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         print(f"Warning: Invalid loss detected: {raw_loss.item()}, skipping this batch")
                         continue
                     
-                    # Backward pass - this will record inf checks in the scaler
+                    # Backward pass - this will record inf checks in the scaler (if using mixed precision)
                     accelerator.backward(raw_loss)
                         
-                    scale = accelerator.scaler.get_scale()
+                    # Get scale only if using mixed precision (scaler exists)
+                    scale = accelerator.scaler.get_scale() if accelerator.scaler is not None else 1.0
+                    
                     # step optimizer
                     if self.global_step % cfg.training.gradient_accumulate_every == 0:
                         # The wrapped optimizer from accelerate.prepare() will handle scaler.step() internally
-                        # But we need to ensure backward was called before step
-                        # Check if scaler has recorded any inf checks
-                        if hasattr(accelerator, 'scaler') and accelerator.scaler is not None:
-                            # The scaler should have recorded inf checks during backward
-                            # If not, this might indicate an issue with the backward pass
-                            pass
+                        # (only if using mixed precision)
                         self.optimizer.step()
                         self.optimizer.zero_grad()
                         self.lr_scheduler.step()
