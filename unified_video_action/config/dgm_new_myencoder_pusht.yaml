@@ -36,7 +36,7 @@ training:
   tqdm_interval_sec: 1.0
   use_ema: true
   val_every: 1
-  mixed_precision: 'fp16'
+  mixed_precision: 'no'
   
 checkpoint:
   save_last_ckpt: true

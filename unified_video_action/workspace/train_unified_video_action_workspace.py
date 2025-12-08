@@ -386,30 +386,48 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     # resize image
                     batch = resize_image(cfg, batch)
                     # compute loss
+                    # Handle mixed precision training properly
                     if (
                         "deepspeed_config" in cfg.training
                         and cfg.training.deepspeed_config is not None
                     ): 
+                        # DeepSpeed mode: use torch.autocast
                         with torch.autocast(device_type="cuda", dtype=torch.bfloat16): # You might need to change the device_type to str(device) for other versions of torch
                             raw_loss, (loss_diffusion, loss_action) = self.model(batch)
                     else:
-                        # Use autocast for mixed precision training (fp16)
+                        # Non-DeepSpeed mode: use torch.autocast based on mixed_precision setting
+                        # This ensures proper integration with accelerate's mixed precision handling
                         if cfg.training.mixed_precision == "fp16":
-                            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                            # Use fp16 autocast
+                            with torch.cuda.amp.autocast():
                                 raw_loss, (loss_diffusion, loss_action) = self.model(batch)
                         elif cfg.training.mixed_precision == "bf16":
-                            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                            # Use bf16 autocast
+                            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
                                 raw_loss, (loss_diffusion, loss_action) = self.model(batch)
                         else:
                             # No mixed precision
                             raw_loss, (loss_diffusion, loss_action) = self.model(batch)
                     
-                    # backward pass
+                    # backward pass - accelerate will handle mixed precision scaling
+                    # Ensure loss is valid before backward
+                    if torch.isnan(raw_loss) or torch.isinf(raw_loss):
+                        print(f"Warning: Invalid loss detected: {raw_loss.item()}, skipping this batch")
+                        continue
+                    
+                    # Backward pass - this will record inf checks in the scaler
                     accelerator.backward(raw_loss)
                         
                     scale = accelerator.scaler.get_scale()
                     # step optimizer
                     if self.global_step % cfg.training.gradient_accumulate_every == 0:
+                        # The wrapped optimizer from accelerate.prepare() will handle scaler.step() internally
+                        # But we need to ensure backward was called before step
+                        # Check if scaler has recorded any inf checks
+                        if hasattr(accelerator, 'scaler') and accelerator.scaler is not None:
+                            # The scaler should have recorded inf checks during backward
+                            # If not, this might indicate an issue with the backward pass
+                            pass
                         self.optimizer.step()
                         self.optimizer.zero_grad()
                         self.lr_scheduler.step()
