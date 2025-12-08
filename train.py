@@ -89,10 +89,39 @@ def main(cfg: OmegaConf):
         strict_loading = getattr(cfg, 'strict_loading', False)
         print(f"strict_loading from config: {strict_loading}")
         
-        if cfg.training.use_ema:
-            workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=strict_loading)
+        # By default, exclude epoch and global_step to start training from epoch 0
+        # This allows loading model weights without restoring training state
+        # Set restore_training_state=true in config to restore epoch/global_step
+        restore_training_state = getattr(cfg, 'restore_training_state', False)
+        
+        # Determine which pickles to load
+        if restore_training_state:
+            # Load all pickles (including epoch and global_step)
+            include_keys = None
+            print(f"Restoring training state from checkpoint (epoch, global_step will be loaded)")
         else:
-            workspace.load_payload_new(payload, exclude_keys=['ema_model'], include_keys=None, diffhead_finetuning=True, strict=strict_loading)
+            # Exclude epoch and global_step to start from epoch 0
+            pickles_keys = list(payload.get("pickles", {}).keys())
+            include_keys = [k for k in pickles_keys if k not in ['epoch', 'global_step']]
+            print(f"Excluding training state (epoch, global_step) to start from epoch 0")
+            print(f"Set restore_training_state=true in config to restore epoch/global_step from checkpoint")
+        
+        if cfg.training.use_ema:
+            workspace.load_payload_new(
+                payload, 
+                exclude_keys=None, 
+                include_keys=include_keys,
+                diffhead_finetuning=False, 
+                strict=strict_loading
+            )
+        else:
+            workspace.load_payload_new(
+                payload, 
+                exclude_keys=['ema_model'], 
+                include_keys=include_keys,
+                diffhead_finetuning=True, 
+                strict=strict_loading
+            )
 
     if cfg.freeze_submodules:
         workspace.freeze_submodules(action_only=True)

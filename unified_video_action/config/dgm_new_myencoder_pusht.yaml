@@ -75,7 +75,8 @@ multi_run:
 
 # Option 1: Start from scratch (recommended for initial CNN encoder training)
 # Only load pretrained Transformer weights via pretrained_model_path in model config
-payload: ./checkpoints/pusht_dgm.ckpt  # Don't load full model checkpoint, start fresh
+payload: ./checkpoints/pusht_dgm.ckpt  # Load model weights from checkpoint
+restore_training_state: false  # If false, exclude epoch/global_step to start from epoch 0 (default: false)
 freeze_submodules: true  # Freeze Transformer, train only CNN encoder
 strict_loading: false
 
