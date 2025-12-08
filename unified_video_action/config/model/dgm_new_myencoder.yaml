@@ -43,7 +43,7 @@ policy:
     use_ucgm: True
     num_sampling_steps: 2
     # [x-pred] x-prediction mode configuration
-    prediction_mode: "x_pred"  # Use x-prediction mode instead of transport
+    prediction_mode: "transport"  # Use x-prediction mode instead of transport
     ucgmts_config:
       transport_type: "Linear"  # Use Linear transport to match paper (gamma_in(t) = 1-t)
       consistc_ratio: 0.0  # Standard multi-step training (no consistency)
