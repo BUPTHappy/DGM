@@ -28,7 +28,7 @@ training:
   lr_warmup_steps: 1000
   max_train_steps: null
   max_val_steps: null
-  num_epochs: 200 
+  num_epochs: 1000 
   resume: false
   rollout_every: 1
   sample_every: 5
@@ -75,7 +75,7 @@ multi_run:
 
 # Option 1: Start from scratch (recommended for initial CNN encoder training)
 # Only load pretrained Transformer weights via pretrained_model_path in model config
-payload: ./checkpoints/pusht.ckpt  # Don't load full model checkpoint, start fresh
+payload: ./checkpoints/pusht_dgm.ckpt  # Don't load full model checkpoint, start fresh
 freeze_submodules: true  # Freeze Transformer, train only CNN encoder
 strict_loading: false
 
