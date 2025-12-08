@@ -387,41 +387,54 @@ def get_trajectory(nactions, T, shift_action, use_history_action=False):
 
     return history_trajectory, trajectory
 
-
-def extract_latent_autoregressive(vae_model, x):
+#[my_encoder]
+def extract_latent_autoregressive(vae_model, x, eval=False):
     x = x.float()
     B, C, T, H, W = x.size()
-    with torch.no_grad():
-        posterior = vae_model.encode(rearrange(x, "b c t h w -> (b t) c h w"))
-        z = posterior.sample().mul_(0.2325)
+
+    # checking if it's cnn encoder by checking class type
+    from unified_video_action.encoder.policy_image_encoder import PolicyImageEncoder
+    is_cnn_encoder = isinstance(vae_model, PolicyImageEncoder)
+
+    if is_cnn_encoder:
+        if eval:
+            with torch.no_grad():
+                output = vae_model.encode(rearrange(x, "b c t h w -> (b t) c h w"))
+                z = output.sample()
+        else:
+            #training mode
+            output = vae_model.encode(rearrange(x, "b c t h w -> (b t) c h w"))
+            z = output.sample()
         z = rearrange(z, "(b t) c h w -> b t c h w", b=B)
+    else:
+        #VAE encoder : always use no_grad, apply scaling
+        with torch.no_grad():
+            posterior = vae_model.encode(rearrange(x, "b c t h w -> (b t) c h w"))
+            z = posterior.sample().mul_(0.2325)
+            z = rearrange(z, "(b t) c h w -> b t c h w", b=B)
     latent_size = z.size()[2:]
     return z, latent_size
 
-
+#[my_encoder]
 def get_vae_latent(x, vae_model, eval=False, proprioception_input={}):
-    train = not eval
+    #train = not eval
 
     c, x = torch.chunk(x, 2, dim=2)  # take the first half as condition
 
     if proprioception_input is not None:
         if "second_image" in proprioception_input:
             second_image_z, _ = extract_latent_autoregressive(
-                vae_model, proprioception_input["second_image"]
+                vae_model, proprioception_input["second_image"],eval=eval
             )
             proprioception_input["second_image_z"] = second_image_z
         if "pred_second_image" in proprioception_input:
             pred_second_image_z, _ = extract_latent_autoregressive(
-                vae_model, proprioception_input["pred_second_image"]
+                vae_model, proprioception_input["pred_second_image"], eval=eval
             )
             proprioception_input["pred_second_image_z"] = pred_second_image_z
 
-    with torch.no_grad():
-        if train:
-            z, latent_size = extract_latent_autoregressive(vae_model, x)
-        else:
-            z, latent_size = extract_latent_autoregressive(vae_model, x)
-        c, latent_size = extract_latent_autoregressive(vae_model, c)
+    z, latent_size = extract_latent_autoregressive(vae_model, x, eval = eval)
+    c, latent_size = extract_latent_autoregressive(vae_model, c, eval = eval)
 
     return x, z, c, latent_size, proprioception_input
 

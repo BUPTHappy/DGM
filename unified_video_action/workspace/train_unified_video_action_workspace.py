@@ -124,9 +124,13 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                     print(f"  extrapol_ratio: {getattr(ucgmts_config, 'extrapol_ratio', 'N/A')}")
             print(f"{'='*50}")
     
+    
+    #[my_encoder]
     def freeze_submodules(self, action_only=False):
-        # freeze submodules except the action diffusion head
-        # Let's say you want to train only model.classifier
+        # Check encoder type
+        from unified_video_action.encoder.policy_image_encoder import PolicyImageEncoder
+        is_cnn_encoder = isinstance(self.model.vae_model, PolicyImageEncoder)
+
         if self.cfg.training.use_ema:
             models = [self.model, self.ema_model]
         else:
@@ -137,20 +141,46 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
             model.model.eval()
             for param in model.model.parameters():
                 param.requires_grad = False
-            
             print(f"Model type: {type(model.model)}")
-            # Unfreeze only diffloss and diffactloss
-            if not action_only:
-                if hasattr(model.model, "diffloss"):
-                    model.model.diffloss.train()
-                    for param in model.model.diffloss.parameters():
-                        param.requires_grad = True
-                    print("Unfreezing diffloss")
-            if hasattr(model.model, "diffactloss"):
-                model.model.diffactloss.train()
-                for param in model.model.diffactloss.parameters():
+            
+            if is_cnn_encoder:
+                # CNN encoder: keep it trainable
+                model.vae_model.train()  # Set to training mode
+                for param in model.vae_model.parameters():
                     param.requires_grad = True
-                print("Unfreezing diffactloss")
+                print("Using CNN encoder - keeping encoder trainable")
+                
+                # For CNN encoder training, freeze all diffusion heads
+                # Only train the encoder, keep Transformer and diffusion heads frozen
+                if hasattr(model.model, "diffloss"):
+                    model.model.diffloss.eval()
+                    for param in model.model.diffloss.parameters():
+                        param.requires_grad = False
+                    print("Freezing diffloss (video diffusion head)")
+                if hasattr(model.model, "diffactloss"):
+                    model.model.diffactloss.eval()
+                    for param in model.model.diffactloss.parameters():
+                        param.requires_grad = False
+                    print("Freezing diffactloss (action diffusion head)")
+            else:
+                # VAE encoder: keep it frozen (should already be frozen in __init__)
+                model.vae_model.eval()
+                for param in model.vae_model.parameters():
+                    param.requires_grad = False
+                print("Using VAE encoder - encoder remains frozen")
+                
+                # For VAE, use original logic: unfreeze diffusion heads based on action_only
+                if not action_only:
+                    if hasattr(model.model, "diffloss"):
+                        model.model.diffloss.train()
+                        for param in model.model.diffloss.parameters():
+                            param.requires_grad = True
+                        print("Unfreezing diffloss")
+                if hasattr(model.model, "diffactloss"):
+                    model.model.diffactloss.train()
+                    for param in model.model.diffactloss.parameters():
+                        param.requires_grad = True
+                    print("Unfreezing diffactloss")
             
     def test_rollout(self):
         """

@@ -1,0 +1,103 @@
+name: uva
+
+defaults:
+  - _self_
+  - task: pusht
+  - model: dgm_new_myencoder  # Use CNN encoder model config
+
+dataloader:
+  batch_size: 32
+  num_workers: 8
+  persistent_workers: false
+  pin_memory: true
+  shuffle: true
+
+val_dataloader:
+  batch_size: 32
+  num_workers: 8
+  persistent_workers: false
+  pin_memory: true
+  shuffle: false
+
+training:
+  checkpoint_every: 10
+  debug: false
+  device: cuda:0
+  gradient_accumulate_every: 1
+  lr_scheduler: cosine
+  lr_warmup_steps: 1000
+  max_train_steps: null
+  max_val_steps: null
+  num_epochs: 200 
+  resume: true
+  rollout_every: 1
+  sample_every: 5
+  seed: 42
+  tqdm_interval_sec: 1.0
+  use_ema: true
+  val_every: 1
+  mixed_precision: 'fp16'
+  
+checkpoint:
+  save_last_ckpt: true
+  save_last_snapshot: false
+  topk:
+    monitor_key: test_mean_score
+    format_str: epoch={epoch:04d}-test_mean_score={test_mean_score:.3f}.ckpt
+    k: 1
+    mode: max
+
+ema:
+  _target_: unified_video_action.model.autoregressive.ema_model.EMAModel
+  inv_gamma: 1.0
+  max_value: 0.9999
+  min_value: 0.0
+  power: 0.75
+  update_after_step: 0
+
+logging:
+  group: null
+  id: null
+  mode: online 
+  name: train_uva_pusht_cnn_encoder  # Updated name for CNN encoder
+  project: unified_video_action
+  resume: false
+  tags:
+  - train_uva_pusht
+  - pusht
+  - cnn_encoder
+  - x_prediction
+  - x_pred
+
+multi_run:
+  run_dir: data/outputs/train_uva_pusht_cnn_encoder
+  wandb_name_base: train_uva_pusht_cnn_encoder
+
+# Option 1: Start from scratch (recommended for initial CNN encoder training)
+# Only load pretrained Transformer weights via pretrained_model_path in model config
+payload: null  # Don't load full model checkpoint, start fresh
+freeze_submodules: true  # Freeze Transformer, train only CNN encoder
+strict_loading: false 
+
+# Option 2: If you want to load from a VAE-trained checkpoint
+# The encoder part will be skipped (due to strict_loading=false), but Transformer weights will load
+# payload: ./checkpoints/pusht.ckpt
+# freeze_submodules: true
+# strict_loading: false  # This allows skipping mismatched encoder weights
+
+save_folder: ./logs/time_logs/pusht_cnn_encoder
+
+# Bayesian Optimization Configuration (disabled for initial CNN encoder training)
+bayesian_optimization:
+  enabled: false
+  optimization_mode: "balanced"
+  start_epoch: 140  
+  interval: 20      
+  max_trials: 10   
+  final_trials: 15 
+  n_test: 5      
+  final_n_test: 8 
+  device: cuda:0
+  output_dir: ./bayesian_optimization_logs
+  use_best_checkpoint_for_final: true
+

@@ -25,6 +25,7 @@ from unified_video_action.utils.data_utils import (
 )
 from unified_video_action.model.autoregressive import mar_con_unified  as mar
 from unified_video_action.vae.vaekl import AutoencoderKL
+from unified_video_action.encoder.policy_image_encoder import PolicyImageEncoder
 from unified_video_action.utils.language_model import (
     get_text_model,
     extract_text_features,
@@ -69,12 +70,24 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
         self.use_history_action = kwargs["use_history_action"]
         self.use_proprioception = kwargs["use_proprioception"]
 
-        ## =========================== load vae model ===========================
-        with torch.no_grad():
-            self.vae_model = AutoencoderKL(**vae_model_params)
-        self.vae_model.eval()
-        for param in self.vae_model.parameters():
-            param.requires_grad = False
+        ## =========================== [my_encoder]load my encoder model ===========================
+        encoder_type = vae_model_params.get("encoder_type", "vae")
+        if encoder_type == "cnn":
+            #load cn encoder
+            encoder_params = dict(vae_model_params)  # Convert OmegaConf to dict
+            encoder_params.pop("encoder_type", None)  # Remove encoder_type
+            self.vae_model = PolicyImageEncoder(**encoder_params)
+            self.vae_model.train() # set to train mode, the it will be trainable
+            for param in self.vae_model.parameters():
+                param.requires_grad = True
+            print("Using CNNPolicyEncode(trainable)")
+        else:
+            with torch.no_grad():
+                self.vae_model = AutoencoderKL(**vae_model_params)
+                self.vae_model.eval()
+                for param in self.vae_model.parameters():
+                    param.requires_grad = False
+                print("Using AutoencoderKL(pretrained)")
 
         ## =========================== load language model ===========================
         self.text_model, self.tokenizer, self.max_length = get_text_model(
@@ -302,14 +315,15 @@ class UnifiedVideoActionPolicy(BaseImagePolicy):
             {"obs": obs_dict}, task_name=self.task_name, eval=True, **self.kwargs
         )
 
+        #[my_encoder]
         if self.use_proprioception:
             if "second_image" in proprioception_input:
                 second_image_z, _ = extract_latent_autoregressive(
-                    self.vae_model, proprioception_input["second_image"]
+                    self.vae_model, proprioception_input["second_image"], eval=True
                 )
                 proprioception_input["second_image_z"] = second_image_z
 
-        c, latent_size = extract_latent_autoregressive(self.vae_model, c.detach())
+        c, latent_size = extract_latent_autoregressive(self.vae_model, c.detach(), eval=True)
 
         z, act_out = self.model.sample_tokens(
             bsz=B,
