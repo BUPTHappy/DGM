@@ -393,7 +393,16 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         with torch.autocast(device_type="cuda", dtype=torch.bfloat16): # You might need to change the device_type to str(device) for other versions of torch
                             raw_loss, (loss_diffusion, loss_action) = self.model(batch)
                     else:
-                        raw_loss, (loss_diffusion, loss_action) = self.model(batch)
+                        # Use autocast for mixed precision training (fp16)
+                        if cfg.training.mixed_precision == "fp16":
+                            with torch.autocast(device_type="cuda", dtype=torch.float16):
+                                raw_loss, (loss_diffusion, loss_action) = self.model(batch)
+                        elif cfg.training.mixed_precision == "bf16":
+                            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                                raw_loss, (loss_diffusion, loss_action) = self.model(batch)
+                        else:
+                            # No mixed precision
+                            raw_loss, (loss_diffusion, loss_action) = self.model(batch)
                     
                     # backward pass
                     accelerator.backward(raw_loss)
