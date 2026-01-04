@@ -22,8 +22,20 @@ from unified_video_action.policy.unified_video_action_policy import UnifiedVideo
 
 
 def count_parameters(model):
-    """统计模型参数量"""
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    """统计模型参数量，支持nn.Module和nn.Parameter"""
+    import torch.nn as nn
+    if isinstance(model, nn.Parameter):
+        # 如果是单个Parameter对象，直接返回其参数量
+        return model.numel() if model.requires_grad else 0
+    elif isinstance(model, nn.Module):
+        # 如果是Module，统计所有参数
+        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    else:
+        # 其他情况（如tensor），尝试直接获取numel
+        try:
+            return model.numel() if hasattr(model, 'requires_grad') and model.requires_grad else 0
+        except:
+            return 0
 
 
 def count_parameters_by_module(model, module_name_prefix=""):
