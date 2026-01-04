@@ -129,28 +129,8 @@ def analyze_model_parameters(policy_model):
             results["vae"] = 0
     else:
         print("警告: policy_model 没有 vae_model 属性")
+        print("提示: VAE模型会在实例化时自动创建，如果路径不存在可能无法加载")
         results["vae"] = 0
-        
-        # 详细统计VAE各部分
-        if hasattr(vae_model, 'encoder'):
-            encoder_params = count_parameters(vae_model.encoder, only_trainable=False)
-            print(f"  - Encoder: {encoder_params:,} ({format_number(encoder_params)})")
-        
-        if hasattr(vae_model, 'decoder'):
-            decoder_params = count_parameters(vae_model.decoder, only_trainable=False)
-            print(f"  - Decoder: {decoder_params:,} ({format_number(decoder_params)})")
-        
-        if hasattr(vae_model, 'quant_conv'):
-            quant_conv_params = count_parameters(vae_model.quant_conv, only_trainable=False)
-            print(f"  - Quant Conv: {quant_conv_params:,} ({format_number(quant_conv_params)})")
-        
-        if hasattr(vae_model, 'post_quant_conv'):
-            post_quant_conv_params = count_parameters(vae_model.post_quant_conv, only_trainable=False)
-            print(f"  - Post Quant Conv: {post_quant_conv_params:,} ({format_number(post_quant_conv_params)})")
-    else:
-        print(f"\n=== VAE部分 ===")
-        print("警告: VAE模型未找到或未加载")
-        print("提示: VAE模型会在实例化时自动加载，如果路径不存在可能无法加载")
     
     # 2. Transformer部分
     print(f"\n=== Transformer部分 ===")
