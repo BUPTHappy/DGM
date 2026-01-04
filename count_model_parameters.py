@@ -351,12 +351,17 @@ def main(cfg):
         task_modes = cfg.task.task_modes if hasattr(cfg.task, 'task_modes') else []
         if task_modes is None:
             task_modes = []
-        elif not isinstance(task_modes, (list, tuple)):
-            # 如果不是列表/元组（比如是int），转换为空列表
-            print(f"警告: task_modes类型为{type(task_modes)}，将转换为空列表")
+        elif isinstance(task_modes, (int, float)):
+            # 如果是数字，转换为空列表
+            print(f"警告: task_modes为数字类型，将转换为空列表")
             task_modes = []
         else:
-            task_modes = list(task_modes)
+            # ListConfig, list, tuple等都转换为列表
+            try:
+                task_modes = list(task_modes)
+            except (TypeError, ValueError):
+                print(f"警告: 无法将task_modes转换为列表，使用空列表")
+                task_modes = []
         
         # 确保normalizer_type存在
         normalizer_type = cfg.task.dataset.normalizer_type if hasattr(cfg.task.dataset, 'normalizer_type') else None

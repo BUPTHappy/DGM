@@ -37,8 +37,13 @@ class DiffLoss(nn.Module):
         self.train_diffusion = create_diffusion(
             timestep_respacing="", noise_schedule="cosine"
         )
+        # Convert num_sampling_steps to string if it's an integer
+        if isinstance(num_sampling_steps, int):
+            timestep_respacing = str(num_sampling_steps)
+        else:
+            timestep_respacing = num_sampling_steps
         self.gen_diffusion = create_diffusion(
-            timestep_respacing=num_sampling_steps, noise_schedule="cosine"
+            timestep_respacing=timestep_respacing, noise_schedule="cosine"
         )
 
     def forward(self, target, z, mask=None, conf_score=None, text_latents=None):
