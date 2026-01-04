@@ -332,6 +332,10 @@ def main(cfg):
     注意：此脚本直接从代码和配置文件实例化模型来统计参数量，
     不需要加载checkpoint权重。参数量只取决于模型结构，与权重值无关。
     """
+    import os
+    # 设置环境变量以获取完整错误堆栈
+    os.environ['HYDRA_FULL_ERROR'] = '1'
+    
     print("="*60)
     print("模型参数量统计")
     print("="*60)
@@ -340,25 +344,45 @@ def main(cfg):
     
     # 实例化模型（不需要加载权重）
     print("\n正在从配置文件实例化模型...")
-    language_emb_model = cfg.task.dataset.language_emb_model if hasattr(cfg.task.dataset, 'language_emb_model') else None
-    
-    policy_model: UnifiedVideoActionPolicy = hydra.utils.instantiate(
-        cfg.model.policy,
-        task_name=cfg.task.name,
-        task_modes=cfg.task.task_modes if hasattr(cfg.task, 'task_modes') else [],
-        normalizer_type=cfg.task.dataset.normalizer_type if hasattr(cfg.task.dataset, 'normalizer_type') else None,
-        language_emb_model=language_emb_model,
-    )
-    
-    print("模型结构加载完成！\n")
-    
-    # 分析参数量
-    results = analyze_model_parameters(policy_model)
-    
-    # 打印总结
-    print_summary(results)
-    
-    return results
+    try:
+        language_emb_model = cfg.task.dataset.language_emb_model if hasattr(cfg.task.dataset, 'language_emb_model') else None
+        
+        # 确保task_modes是列表类型
+        task_modes = cfg.task.task_modes if hasattr(cfg.task, 'task_modes') else []
+        if task_modes is None:
+            task_modes = []
+        elif not isinstance(task_modes, (list, tuple)):
+            # 如果不是列表/元组（比如是int），转换为空列表
+            print(f"警告: task_modes类型为{type(task_modes)}，将转换为空列表")
+            task_modes = []
+        else:
+            task_modes = list(task_modes)
+        
+        # 确保normalizer_type存在
+        normalizer_type = cfg.task.dataset.normalizer_type if hasattr(cfg.task.dataset, 'normalizer_type') else None
+        
+        policy_model: UnifiedVideoActionPolicy = hydra.utils.instantiate(
+            cfg.model.policy,
+            task_name=cfg.task.name,
+            task_modes=task_modes,
+            normalizer_type=normalizer_type,
+            language_emb_model=language_emb_model,
+        )
+        
+        print("模型结构加载完成！\n")
+        
+        # 分析参数量
+        results = analyze_model_parameters(policy_model)
+        
+        # 打印总结
+        print_summary(results)
+        
+        return results
+    except Exception as e:
+        print(f"\n错误: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 if __name__ == "__main__":
