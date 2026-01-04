@@ -21,19 +21,34 @@ sys.path.append(ROOT_DIR)
 from unified_video_action.policy.unified_video_action_policy import UnifiedVideoActionPolicy
 
 
-def count_parameters(model):
-    """统计模型参数量，支持nn.Module和nn.Parameter"""
+def count_parameters(model, only_trainable=False):
+    """
+    统计模型参数量，支持nn.Module和nn.Parameter
+    
+    Args:
+        model: 要统计的模型或参数
+        only_trainable: 如果为True，只统计requires_grad=True的参数；如果为False，统计所有参数
+    """
     import torch.nn as nn
     if isinstance(model, nn.Parameter):
         # 如果是单个Parameter对象，直接返回其参数量
-        return model.numel() if model.requires_grad else 0
+        if only_trainable:
+            return model.numel() if model.requires_grad else 0
+        else:
+            return model.numel()
     elif isinstance(model, nn.Module):
         # 如果是Module，统计所有参数
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+        if only_trainable:
+            return sum(p.numel() for p in model.parameters() if p.requires_grad)
+        else:
+            return sum(p.numel() for p in model.parameters())
     else:
         # 其他情况（如tensor），尝试直接获取numel
         try:
-            return model.numel() if hasattr(model, 'requires_grad') and model.requires_grad else 0
+            if only_trainable:
+                return model.numel() if hasattr(model, 'requires_grad') and model.requires_grad else 0
+            else:
+                return model.numel()
         except:
             return 0
 
@@ -82,30 +97,60 @@ def analyze_model_parameters(policy_model):
     mar_model = policy_model.model
     
     # 1. VAE部分
-    if hasattr(policy_model, 'vae_model') and policy_model.vae_model is not None:
-        vae_model = policy_model.vae_model
-        # VAE包括encoder、decoder、quant_conv、post_quant_conv
-        vae_params = count_parameters(vae_model)
-        results["vae"] = vae_params
-        print(f"\n=== VAE部分 ===")
-        print(f"总参数量: {vae_params:,} ({format_number(vae_params)})")
+    print(f"\n=== VAE部分 ===")
+    if hasattr(policy_model, 'vae_model'):
+        if policy_model.vae_model is not None:
+            vae_model = policy_model.vae_model
+            # VAE包括encoder、decoder、quant_conv、post_quant_conv
+            # 注意：VAE参数通常被冻结（requires_grad=False），但我们需要统计所有参数
+            vae_params = count_parameters(vae_model, only_trainable=False)
+            results["vae"] = vae_params
+            print(f"总参数量: {vae_params:,} ({format_number(vae_params)})")
+            
+            # 详细统计VAE各部分
+            if hasattr(vae_model, 'encoder'):
+                encoder_params = count_parameters(vae_model.encoder, only_trainable=False)
+                print(f"  - Encoder: {encoder_params:,} ({format_number(encoder_params)})")
+            
+            if hasattr(vae_model, 'decoder'):
+                decoder_params = count_parameters(vae_model.decoder, only_trainable=False)
+                print(f"  - Decoder: {decoder_params:,} ({format_number(decoder_params)})")
+            
+            if hasattr(vae_model, 'quant_conv'):
+                quant_conv_params = count_parameters(vae_model.quant_conv, only_trainable=False)
+                print(f"  - Quant Conv: {quant_conv_params:,} ({format_number(quant_conv_params)})")
+            
+            if hasattr(vae_model, 'post_quant_conv'):
+                post_quant_conv_params = count_parameters(vae_model.post_quant_conv, only_trainable=False)
+                print(f"  - Post Quant Conv: {post_quant_conv_params:,} ({format_number(post_quant_conv_params)})")
+        else:
+            print("警告: vae_model 属性存在但值为 None")
+            print("提示: VAE模型会在实例化时自动创建，如果路径不存在可能无法加载")
+            results["vae"] = 0
+    else:
+        print("警告: policy_model 没有 vae_model 属性")
+        results["vae"] = 0
         
         # 详细统计VAE各部分
         if hasattr(vae_model, 'encoder'):
-            encoder_params = count_parameters(vae_model.encoder)
+            encoder_params = count_parameters(vae_model.encoder, only_trainable=False)
             print(f"  - Encoder: {encoder_params:,} ({format_number(encoder_params)})")
         
         if hasattr(vae_model, 'decoder'):
-            decoder_params = count_parameters(vae_model.decoder)
+            decoder_params = count_parameters(vae_model.decoder, only_trainable=False)
             print(f"  - Decoder: {decoder_params:,} ({format_number(decoder_params)})")
         
         if hasattr(vae_model, 'quant_conv'):
-            quant_conv_params = count_parameters(vae_model.quant_conv)
+            quant_conv_params = count_parameters(vae_model.quant_conv, only_trainable=False)
             print(f"  - Quant Conv: {quant_conv_params:,} ({format_number(quant_conv_params)})")
         
         if hasattr(vae_model, 'post_quant_conv'):
-            post_quant_conv_params = count_parameters(vae_model.post_quant_conv)
+            post_quant_conv_params = count_parameters(vae_model.post_quant_conv, only_trainable=False)
             print(f"  - Post Quant Conv: {post_quant_conv_params:,} ({format_number(post_quant_conv_params)})")
+    else:
+        print(f"\n=== VAE部分 ===")
+        print("警告: VAE模型未找到或未加载")
+        print("提示: VAE模型会在实例化时自动加载，如果路径不存在可能无法加载")
     
     # 2. Transformer部分
     print(f"\n=== Transformer部分 ===")
