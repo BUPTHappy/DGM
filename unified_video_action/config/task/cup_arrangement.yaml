@@ -30,7 +30,7 @@ dataset:
   val_ratio: 0.02
   data_aug: true
   normalizer_type: all
-  dataset_path: data/cup_arrangement.zarr  # Update with actual path
+  dataset_path: data/cup_arrangement_1.zarr  # Using lab dataset (smaller, faster). Use cup_arrangement_0.zarr for wild dataset.
   dataset_type: singletask
 
 # No env_runner for real-world dataset - validation will use action L2 error

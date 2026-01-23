@@ -7,11 +7,25 @@ import click
 
 PROJECT_NAME = "uva"
 
-# Only download cup arrangement datasets
+# UMI Cup Arrangement datasets
+# cup_arrangement_1 (lab) is smaller and faster for quick experiments
+# cup_arrangement_0 (wild) is larger with more diverse real-world scenarios
+ALL_DATASETS = {
+    "cup_arrangement_0": {
+        "url": "https://real.stanford.edu/umi/data/cup_in_the_wild/cup_in_the_wild.zarr.zip",
+        "name": "cup_in_the_wild",
+        "description": "Larger dataset with diverse real-world scenarios"
+    },
+    "cup_arrangement_1": {
+        "url": "https://real.stanford.edu/umi/data/cup_arrangement/cup_in_the_lab.zarr.zip",
+        "name": "cup_in_the_lab",
+        "description": "Smaller dataset, faster for quick experiments (recommended for fast training)"
+    },
+}
+
+# Default: only download lab dataset (smaller, faster)
 DATASETS = {
-    ### UMI Cup Arrangement
-    "cup_arrangement_0": "https://real.stanford.edu/umi/data/cup_in_the_wild/cup_in_the_wild.zarr.zip",  # cup_in_the_wild
-    "cup_arrangement_1": "https://real.stanford.edu/umi/data/cup_arrangement/cup_in_the_lab.zarr.zip",  # cup_in_the_lab
+    "cup_arrangement_1": ALL_DATASETS["cup_arrangement_1"]["url"]
 }
 
 
@@ -204,30 +218,48 @@ def process_dataset(dataset_name: str, dataset_url: str, data_dir: str, extract:
 @click.option("--data_dir", type=str, default="data", help="Directory to save datasets (default: data)")
 @click.option("--extract/--no-extract", default=True, help="Extract zip files after downloading (default: True)")
 @click.option("--parallel/--no-parallel", default=True, help="Download datasets in parallel (default: True)")
-def main(data_dir: str, extract: bool, parallel: bool):
+@click.option("--dataset", type=click.Choice(["lab", "wild", "both"], case_sensitive=False), 
+              default="lab", help="Which dataset to download: lab (smaller, faster), wild (larger), or both (default: lab)")
+def main(data_dir: str, extract: bool, parallel: bool, dataset: str):
     """
     Download UMI cup arrangement datasets.
     
-    Downloads:
-    - cup_arrangement_0: cup_in_the_wild
-    - cup_arrangement_1: cup_in_the_lab
+    Options:
+    - lab: cup_in_the_lab (smaller, faster for quick experiments) [RECOMMENDED]
+    - wild: cup_in_the_wild (larger, more diverse)
+    - both: download both datasets
     """
+    # Select datasets based on choice
+    selected_datasets = {}
+    if dataset.lower() == "lab" or dataset.lower() == "both":
+        selected_datasets["cup_arrangement_1"] = ALL_DATASETS["cup_arrangement_1"]["url"]
+    if dataset.lower() == "wild" or dataset.lower() == "both":
+        selected_datasets["cup_arrangement_0"] = ALL_DATASETS["cup_arrangement_0"]["url"]
+    
+    if not selected_datasets:
+        print("Error: No datasets selected")
+        return
+    
     os.makedirs(data_dir, exist_ok=True)
     
-    print(f"Downloading {len(DATASETS)} cup arrangement dataset(s) to {data_dir}")
+    print(f"Downloading {len(selected_datasets)} cup arrangement dataset(s) to {data_dir}")
+    print("=" * 60)
+    for name, info in ALL_DATASETS.items():
+        if name in selected_datasets:
+            print(f"  - {name}: {info['name']} ({info['description']})")
     print("=" * 60)
     
-    if parallel and len(DATASETS) > 1:
-        num_processes = min(mp.cpu_count(), len(DATASETS))
+    if parallel and len(selected_datasets) > 1:
+        num_processes = min(mp.cpu_count(), len(selected_datasets))
         print(f"Using {num_processes} parallel processes")
         with mp.Pool(num_processes) as pool:
             pool.starmap(
                 process_dataset,
-                [(dataset_name, url, data_dir, extract) for dataset_name, url in DATASETS.items()],
+                [(dataset_name, url, data_dir, extract) for dataset_name, url in selected_datasets.items()],
             )
     else:
         print("Downloading sequentially")
-        for dataset_name, url in DATASETS.items():
+        for dataset_name, url in selected_datasets.items():
             process_dataset(dataset_name, url, data_dir, extract)
     
     print("=" * 60)
@@ -235,16 +267,23 @@ def main(data_dir: str, extract: bool, parallel: bool):
     print(f"\nDatasets saved to: {data_dir}")
     if extract:
         print("\nExtracted zarr directories:")
-        for dataset_name in DATASETS.keys():
+        for dataset_name in selected_datasets.keys():
             zarr_dir = f"{data_dir}/{dataset_name}.zarr"
             if os.path.exists(zarr_dir):
                 print(f"  - {zarr_dir}")
+                # Show which dataset this is
+                info = ALL_DATASETS.get(dataset_name, {})
+                if info:
+                    print(f"    ({info.get('name', '')})")
     else:
         print("\nZip files:")
-        for dataset_name in DATASETS.keys():
+        for dataset_name in selected_datasets.keys():
             zip_file = f"{data_dir}/{dataset_name}.zarr.zip"
             if os.path.exists(zip_file):
                 print(f"  - {zip_file}")
+                info = ALL_DATASETS.get(dataset_name, {})
+                if info:
+                    print(f"    ({info.get('name', '')})")
 
 
 if __name__ == "__main__":
