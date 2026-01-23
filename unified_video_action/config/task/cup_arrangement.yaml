@@ -3,7 +3,7 @@ task_type: single_dataset
 task_modes: []
 
 shape_meta:
-  image_resolution: 128  # Adjust based on actual image resolution in dataset
+  image_resolution: 224  # Actual resolution from dataset
   action:
     shape:
     - 7  # Single arm: pos(3) + rot(3) + gripper(1) = 7D. For dual arm it would be 14D.
@@ -11,8 +11,8 @@ shape_meta:
     image:
       shape:
       - 3
-      - 128
-      - 128
+      - 224
+      - 224
       type: rgb
     # Robot state information (for UMI datasets)
     robot0_eef_pos:
