@@ -38,12 +38,67 @@ class UmiCupArrangementDataset(BaseImageDataset):
 
         super().__init__()
 
+        # First, check what keys are available in the zarr dataset
+        import zarr
+        zarr_store = zarr.open(dataset_path, mode="r")
+        
+        # ReplayBuffer expects keys in "data" group
+        if "data" not in zarr_store:
+            raise ValueError(f"Dataset does not have 'data' group. Available groups: {list(zarr_store.keys())}")
+        
+        data_group = zarr_store["data"]
+        available_keys = list(data_group.keys())
+        print(f"Available keys in dataset['data']: {available_keys}")
+        
+        # Try to find image key (common names: img, image, rgb)
+        image_key = None
+        for key in ["img", "image", "rgb"]:
+            if key in available_keys:
+                image_key = key
+                break
+        
+        if image_key is None:
+            # Check if there's an "obs" group with image inside
+            if "obs" in available_keys:
+                obs_item = data_group["obs"]
+                if isinstance(obs_item, zarr.Group):
+                    obs_keys = list(obs_item.keys())
+                    print(f"Keys inside 'data/obs': {obs_keys}")
+                    for key in ["image", "rgb", "img"]:
+                        if key in obs_keys:
+                            # For ReplayBuffer, we'll need to handle this differently
+                            # Let's try using "obs" as the key and handle it in _sample_to_data
+                            image_key = "obs"
+                            self.obs_image_key = key
+                            break
+        
+        if image_key is None:
+            raise ValueError(
+                f"Could not find image key in dataset. Available keys: {available_keys}. "
+                "Please check the dataset structure. Expected keys: img, image, rgb, or obs/image"
+            )
+        
+        print(f"Using image key: {image_key}")
+        
+        # Build keys list for ReplayBuffer (only top-level keys in data group)
+        keys_to_load = [image_key, "action"]
+        if "state" in available_keys:
+            keys_to_load.append("state")
+        
+        print(f"Loading keys: {keys_to_load}")
+        
         # Load zarr dataset using ReplayBuffer
-        # UMI datasets typically have keys: img, state, action
-        # Adjust keys based on actual zarr file structure
         self.replay_buffer = ReplayBuffer.copy_from_path(
-            dataset_path, keys=["img", "state", "action"]
+            dataset_path, keys=keys_to_load
         )
+        
+        # Store the image key for later use
+        self.image_key = image_key
+        # Check if we need nested key access
+        if hasattr(self, 'obs_image_key'):
+            self.use_nested_image = True
+        else:
+            self.use_nested_image = False
         
         val_mask = get_val_mask(
             n_episodes=self.replay_buffer.n_episodes, val_ratio=val_ratio, seed=seed
@@ -101,8 +156,32 @@ class UmiCupArrangementDataset(BaseImageDataset):
         return len(self.sampler)
 
     def _sample_to_data(self, sample):
-        # Extract image and convert to (T, C, H, W) format
-        image = np.moveaxis(sample["img"], -1, 1) / 255.0
+        # Extract image using the detected key
+        # Handle both direct key and nested key (e.g., obs/image inside obs group)
+        if self.use_nested_image:
+            # obs is a group, and image is inside it (e.g., obs/image)
+            image_data = sample["obs"][self.obs_image_key]
+        elif "/" in self.image_key:
+            # Nested key like "obs/image" (string path)
+            parts = self.image_key.split("/")
+            image_data = sample
+            for part in parts:
+                image_data = image_data[part]
+        else:
+            # Direct key like "img", "image", "rgb"
+            image_data = sample[self.image_key]
+        
+        # Convert to (T, C, H, W) format
+        # Handle different possible shapes: (T, H, W, C) or (T, C, H, W)
+        if len(image_data.shape) == 4:
+            if image_data.shape[-1] == 3 or image_data.shape[-1] == 1:
+                # Shape is (T, H, W, C), need to move axis
+                image = np.moveaxis(image_data, -1, 1) / 255.0
+            else:
+                # Shape might already be (T, C, H, W)
+                image = image_data.astype(np.float32) / 255.0
+        else:
+            raise ValueError(f"Unexpected image shape: {image_data.shape}")
         
         # Extract action
         action = sample["action"].astype(np.float32)
