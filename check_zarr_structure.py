@@ -6,6 +6,13 @@ import zarr
 import sys
 import os
 
+# Register imagecodecs codecs for zarr (needed for JPEGXL compression)
+try:
+    from unified_video_action.codecs.imagecodecs_numcodecs import register_codecs
+    register_codecs()
+except ImportError:
+    print("Warning: Could not import register_codecs, some compressed arrays may not be readable")
+
 def inspect_zarr(zarr_path):
     """Inspect and print zarr dataset structure"""
     if not os.path.exists(zarr_path):

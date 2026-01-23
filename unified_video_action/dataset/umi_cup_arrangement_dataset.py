@@ -12,8 +12,12 @@ from unified_video_action.common.sampler import (
 from unified_video_action.model.common.normalizer import LinearNormalizer
 from unified_video_action.dataset.base_dataset import BaseImageDataset
 from unified_video_action.common.normalize_util import get_image_range_normalizer
+from unified_video_action.codecs.imagecodecs_numcodecs import register_codecs
 import torchvision.transforms as transforms
 import torchvision
+
+# Register imagecodecs codecs for zarr (needed for JPEGXL compression)
+register_codecs()
 
 
 class UmiCupArrangementDataset(BaseImageDataset):
@@ -81,17 +85,45 @@ class UmiCupArrangementDataset(BaseImageDataset):
         
         print(f"Using image key: {image_key}")
         
-        # Build keys list for ReplayBuffer (only top-level keys in data group)
-        keys_to_load = [image_key, "action"]
-        if "state" in available_keys:
-            keys_to_load.append("state")
+        # Check if action exists, if not we'll compute it from state deltas
+        has_action = "action" in available_keys
+        if not has_action:
+            print("No 'action' key found. Will compute action from state deltas.")
+            # Check if we have the required state keys for computing action
+            required_state_keys = ["robot0_eef_pos", "robot0_eef_rot_axis_angle", "robot0_gripper_width"]
+            has_all_state = all(key in available_keys for key in required_state_keys)
+            if not has_all_state:
+                raise ValueError(
+                    f"Cannot compute action: missing required state keys. "
+                    f"Available: {available_keys}, Required: {required_state_keys}"
+                )
+            self.compute_action_from_state = True
+        else:
+            self.compute_action_from_state = False
+        
+        # Build keys list for ReplayBuffer
+        keys_to_load = [image_key]
+        if has_action:
+            keys_to_load.append("action")
+        else:
+            # Load state keys to compute action
+            keys_to_load.extend(["robot0_eef_pos", "robot0_eef_rot_axis_angle", "robot0_gripper_width"])
         
         print(f"Loading keys: {keys_to_load}")
         
         # Load zarr dataset using ReplayBuffer
-        self.replay_buffer = ReplayBuffer.copy_from_path(
-            dataset_path, keys=keys_to_load
-        )
+        # Note: imagecodecs_jpegxl compression may cause issues, but ReplayBuffer should handle it
+        try:
+            self.replay_buffer = ReplayBuffer.copy_from_path(
+                dataset_path, keys=keys_to_load
+            )
+        except Exception as e:
+            if "imagecodecs_jpegxl" in str(e) or "codec" in str(e).lower():
+                raise RuntimeError(
+                    f"Failed to load dataset due to image compression codec issue: {e}\n"
+                    "Please install imagecodecs: conda install -c conda-forge imagecodecs"
+                ) from e
+            raise
         
         # Store the image key for later use
         self.image_key = image_key
@@ -136,17 +168,25 @@ class UmiCupArrangementDataset(BaseImageDataset):
         return val_set
 
     def get_normalizer(self, mode="limits", **kwargs):
-        data = {
-            "action": self.replay_buffer["action"],
-        }
+        data = {}
         
-        # Add state if available (adjust based on actual data structure)
-        if "state" in self.replay_buffer:
-            # UMI datasets may have different state structure
-            # Adjust based on actual state keys
-            state_data = self.replay_buffer["state"]
-            if state_data.shape[-1] >= 2:
-                data["agent_pos"] = state_data[..., :2]
+        # Get action data (either from buffer or compute from state)
+        if self.compute_action_from_state:
+            # Compute action from state deltas for normalization
+            eef_pos = self.replay_buffer["robot0_eef_pos"]
+            eef_rot = self.replay_buffer["robot0_eef_rot_axis_angle"]
+            gripper = self.replay_buffer["robot0_gripper_width"]
+            
+            # Compute deltas (next - current)
+            action_pos = np.diff(eef_pos, axis=0, prepend=eef_pos[0:1])
+            action_rot = np.diff(eef_rot, axis=0, prepend=eef_rot[0:1])
+            action_gripper = np.diff(gripper, axis=0, prepend=gripper[0:1])
+            
+            # Concatenate to form action: [pos(3), rot(3), gripper(1)] = 7D
+            action = np.concatenate([action_pos, action_rot, action_gripper], axis=-1)
+            data["action"] = action
+        else:
+            data["action"] = self.replay_buffer["action"]
         
         normalizer = LinearNormalizer()
         normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
@@ -169,7 +209,7 @@ class UmiCupArrangementDataset(BaseImageDataset):
             for part in parts:
                 image_data = image_data[part]
         else:
-            # Direct key like "img", "image", "rgb"
+            # Direct key like "camera0_rgb", "img", "image", "rgb"
             image_data = sample[self.image_key]
         
         # Convert to (T, C, H, W) format
@@ -184,16 +224,42 @@ class UmiCupArrangementDataset(BaseImageDataset):
         else:
             raise ValueError(f"Unexpected image shape: {image_data.shape}")
         
-        # Extract action
-        action = sample["action"].astype(np.float32)
+        # Extract or compute action
+        if self.compute_action_from_state:
+            # Compute action as state delta: action[t] = state[t+1] - state[t]
+            # For sequence, we compute deltas within the sequence
+            eef_pos = sample["robot0_eef_pos"].astype(np.float32)  # (T, 3)
+            eef_rot = sample["robot0_eef_rot_axis_angle"].astype(np.float32)  # (T, 3)
+            gripper = sample["robot0_gripper_width"].astype(np.float32)  # (T, 1)
+            
+            # Compute deltas: next - current
+            # For the last timestep, use zero delta (no change)
+            T = eef_pos.shape[0]
+            action_pos = np.diff(eef_pos, axis=0, prepend=eef_pos[0:1])
+            action_rot = np.diff(eef_rot, axis=0, prepend=eef_rot[0:1])
+            action_gripper = np.diff(gripper, axis=0, prepend=gripper[0:1])
+            
+            # Concatenate: [pos(3), rot(3), gripper(1)] = 7D for single arm
+            # For dual arm it would be 14D (7 per arm)
+            action = np.concatenate([action_pos, action_rot, action_gripper], axis=-1).astype(np.float32)
+        else:
+            action = sample["action"].astype(np.float32)
         
-        # Extract state/agent_pos if available
+        # Build obs dict with image and state information
         obs_dict = {"image": image}
-        if "state" in sample:
-            state = sample["state"]
-            if state.shape[-1] >= 2:
-                agent_pos = state[..., :2].astype(np.float32)
-                obs_dict["agent_pos"] = agent_pos
+        
+        # Add state information to obs (needed for UMI datasets)
+        if self.compute_action_from_state:
+            obs_dict["robot0_eef_pos"] = eef_pos
+            obs_dict["robot0_eef_rot_axis_angle"] = eef_rot
+            obs_dict["robot0_gripper_width"] = gripper
+        elif "robot0_eef_pos" in sample:
+            # State keys might be available even if action exists
+            obs_dict["robot0_eef_pos"] = sample["robot0_eef_pos"].astype(np.float32)
+            if "robot0_eef_rot_axis_angle" in sample:
+                obs_dict["robot0_eef_rot_axis_angle"] = sample["robot0_eef_rot_axis_angle"].astype(np.float32)
+            if "robot0_gripper_width" in sample:
+                obs_dict["robot0_gripper_width"] = sample["robot0_gripper_width"].astype(np.float32)
 
         if self.data_aug:
             image_tensor = torch.tensor(image, dtype=torch.float32)

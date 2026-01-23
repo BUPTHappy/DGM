@@ -6,7 +6,7 @@ shape_meta:
   image_resolution: 128  # Adjust based on actual image resolution in dataset
   action:
     shape:
-    - 14  # UMI bimanual action space is typically 14D (7 per arm)
+    - 7  # Single arm: pos(3) + rot(3) + gripper(1) = 7D. For dual arm it would be 14D.
   obs:
     image:
       shape:
@@ -14,11 +14,19 @@ shape_meta:
       - 128
       - 128
       type: rgb
-    # Add agent_pos if state information is available in the dataset
-    # agent_pos:
-    #   shape:
-    #   - 2
-    #   type: low_dim
+    # Robot state information (for UMI datasets)
+    robot0_eef_pos:
+      shape:
+      - 3
+      type: low_dim
+    robot0_eef_rot_axis_angle:
+      shape:
+      - 3
+      type: low_dim
+    robot0_gripper_width:
+      shape:
+      - 1
+      type: low_dim
 
 dataset:
   _target_: unified_video_action.dataset.umi_cup_arrangement_dataset.UmiCupArrangementDataset
