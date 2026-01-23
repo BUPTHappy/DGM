@@ -7,31 +7,11 @@ import click
 
 PROJECT_NAME = "uva"
 
-# Comment out the datasets you don't want to download
+# Only download cup arrangement datasets
 DATASETS = {
-    ### UMI
-    "dish_washing_0": "https://real.stanford.edu/umi/data/dish_washing/bimanual_dish_washing.zarr.zip",
-    "cloth_folding_0": "https://real.stanford.edu/umi/data/bimanual_cloth_folding/bimanual_cloth_folding.zarr.zip",
-    "dynamic_tossing_0": "https://real.stanford.edu/umi/data/dynamic_tossing/dynamic_tossing.zarr.zip",
-    "cup_arrangement_0": "https://real.stanford.edu/umi/data/cup_in_the_wild/cup_in_the_wild.zarr.zip",
-    "cup_arrangement_1": "https://real.stanford.edu/umi/data/cup_arrangement/cup_in_the_lab.zarr.zip",
-    ### ManiWAV
-    "whiteboard_wiping_0": "https://real.stanford.edu/maniwav/data/wipe/replay_buffer.zarr.zip",
-    "bagle_flipping_0": "https://real.stanford.edu/maniwav/data/flip/replay_buffer.zarr.zip",
-    "bagle_flipping_1": "https://real.stanford.edu/maniwav/data/bagel_in_wild/replay_buffer.zarr.zip",
-    "dice_pouring_0": "https://real.stanford.edu/maniwav/data/pour/replay_buffer.zarr.zip",
-    "wire_strapping_0": "https://real.stanford.edu/maniwav/data/velcro_tape/replay_buffer.zarr.zip",
-    ### UMI-on-Legs
-    "kettlebell_pushing_0": "https://real.stanford.edu/umi-on-legs/pushing_2024_05_29_huy.zarr.zip",
-    "tennis_ball_tossing_0": "https://real.stanford.edu/umi-on-legs/tossing.zarr.zip",
-    ### Data Scaling Laws
-    "charger_unplugging_0": "https://huggingface.co/datasets/Fanqi-Lin/Processed-Task-Dataset/resolve/main/unplug_charger/dataset.zarr.zip?download=true",
-    "water_pouring_0": "https://huggingface.co/datasets/Fanqi-Lin/Processed-Task-Dataset/resolve/main/pour_water/dataset.zarr.zip?download=true",
-    "water_pouring_1": "https://huggingface.co/datasets/Fanqi-Lin/Processed-Task-Dataset/resolve/main/pour_water_16_env_4_object/dataset_part_aa?download=true;https://huggingface.co/datasets/Fanqi-Lin/Processed-Task-Dataset/resolve/main/pour_water_16_env_4_object/dataset_part_ab?download=true",  # Merge the two parts before unzipping
-    # "water_pouring_1" contains 2 parts. It will take a while to merge the two parts and unzip the file.
-    "mouse_arrangement_0": "https://huggingface.co/datasets/Fanqi-Lin/Processed-Task-Dataset/resolve/main/arrange_mouse/dataset.zarr.zip?download=true",
-    "mouse_arrangement_1": "https://huggingface.co/datasets/Fanqi-Lin/Processed-Task-Dataset/resolve/main/arrange_mouse_16_env_4_object/dataset.zarr.zip?download=true",
-    "towel_folding_0": "https://huggingface.co/datasets/Fanqi-Lin/Processed-Task-Dataset/resolve/main/fold_towel/dataset.zarr.zip?download=true",
+    ### UMI Cup Arrangement
+    "cup_arrangement_0": "https://real.stanford.edu/umi/data/cup_in_the_wild/cup_in_the_wild.zarr.zip",  # cup_in_the_wild
+    "cup_arrangement_1": "https://real.stanford.edu/umi/data/cup_arrangement/cup_in_the_lab.zarr.zip",  # cup_in_the_lab
 }
 
 
@@ -148,30 +128,123 @@ def convert_zip_to_lz4(dataset_name: str, data_dir: str):
     subprocess.run(["rm", f"{shm_data_dir}/{dataset_name}.zarr.tar.lz4"], check=True)
 
 
-def process_dataset(dataset_name: str, dataset_url: str, data_dir: str) -> None:
-    if os.path.exists(f"{data_dir}/lz4/{dataset_name}.zarr.tar.lz4"):
-        print(
-            f"Skipping {dataset_name} because lz4 file already exists at {data_dir}/lz4/{dataset_name}.zarr.tar.lz4"
-        )
+def process_dataset(dataset_name: str, dataset_url: str, data_dir: str, extract: bool = True) -> None:
+    """
+    Download and optionally extract dataset.
+    
+    Args:
+        dataset_name: Name of the dataset
+        dataset_url: URL to download from
+        data_dir: Directory to save data
+        extract: Whether to extract the zip file (default: True)
+    """
+    zip_file = f"{data_dir}/{dataset_name}.zarr.zip"
+    extracted_dir = f"{data_dir}/{dataset_name}.zarr"
+    
+    # Download if not exists
+    if not os.path.exists(zip_file) and not os.path.exists(extracted_dir):
+        download_data(dataset_name, dataset_url, data_dir)
+    elif os.path.exists(zip_file):
+        print(f"Zip file already exists: {zip_file}")
+    elif os.path.exists(extracted_dir):
+        print(f"Extracted directory already exists: {extracted_dir}")
         return
-    if not os.path.exists(f"{data_dir}/zip/{dataset_name}.zarr.zip"):
-        download_data(dataset_name, dataset_url, f"{data_dir}/zip")
-    else:
-        print(
-            f"Skipping {dataset_name} because zip file already exists at {data_dir}/zip/{dataset_name}.zarr.zip"
-        )
-    convert_zip_to_lz4(dataset_name, f"{data_dir}/zip")
+    
+    # Extract if requested and not already extracted
+    if extract and os.path.exists(zip_file) and not os.path.exists(extracted_dir):
+        print(f"Extracting {zip_file}...")
+        # Create a temporary extraction directory
+        temp_extract_dir = f"{data_dir}/_temp_{dataset_name}"
+        os.makedirs(temp_extract_dir, exist_ok=True)
+        
+        try:
+            subprocess.run(
+                ["unzip", "-q", zip_file, "-d", temp_extract_dir],
+                check=True,
+            )
+            
+            # Find the actual zarr directory inside (usually there's one level of nesting)
+            extracted_contents = os.listdir(temp_extract_dir)
+            if len(extracted_contents) == 1:
+                # If there's a single directory, it's likely the zarr directory
+                nested_path = os.path.join(temp_extract_dir, extracted_contents[0])
+                if os.path.isdir(nested_path):
+                    # Check if it looks like a zarr directory (has .zarray or .zgroup files)
+                    if any(f.endswith('.zarray') or f.endswith('.zgroup') for f in os.listdir(nested_path) if os.path.isfile(os.path.join(nested_path, f))):
+                        # This is the zarr directory, move it to the final location
+                        os.rename(nested_path, extracted_dir)
+                    else:
+                        # It's a container directory, move its contents
+                        os.makedirs(extracted_dir, exist_ok=True)
+                        for item in os.listdir(nested_path):
+                            os.rename(
+                                os.path.join(nested_path, item),
+                                os.path.join(extracted_dir, item)
+                            )
+                else:
+                    # It's a file, just move it
+                    os.rename(nested_path, extracted_dir)
+            else:
+                # Multiple items, move all to extracted_dir
+                os.makedirs(extracted_dir, exist_ok=True)
+                for item in extracted_contents:
+                    os.rename(
+                        os.path.join(temp_extract_dir, item),
+                        os.path.join(extracted_dir, item)
+                    )
+            
+            print(f"✓ Extracted to {extracted_dir}")
+        finally:
+            # Clean up temp directory
+            if os.path.exists(temp_extract_dir):
+                subprocess.run(["rm", "-rf", temp_extract_dir], check=False)
 
 
 @click.command()
-@click.option("--data_dir", type=str, default="uva/umi_data")
-def main(data_dir: str):
-    num_processes = mp.cpu_count()
-    with mp.Pool(num_processes) as pool:
-        pool.starmap(
-            process_dataset,
-            [(dataset_name, url, data_dir) for dataset_name, url in DATASETS.items()],
-        )
+@click.option("--data_dir", type=str, default="data", help="Directory to save datasets (default: data)")
+@click.option("--extract/--no-extract", default=True, help="Extract zip files after downloading (default: True)")
+@click.option("--parallel/--no-parallel", default=True, help="Download datasets in parallel (default: True)")
+def main(data_dir: str, extract: bool, parallel: bool):
+    """
+    Download UMI cup arrangement datasets.
+    
+    Downloads:
+    - cup_arrangement_0: cup_in_the_wild
+    - cup_arrangement_1: cup_in_the_lab
+    """
+    os.makedirs(data_dir, exist_ok=True)
+    
+    print(f"Downloading {len(DATASETS)} cup arrangement dataset(s) to {data_dir}")
+    print("=" * 60)
+    
+    if parallel and len(DATASETS) > 1:
+        num_processes = min(mp.cpu_count(), len(DATASETS))
+        print(f"Using {num_processes} parallel processes")
+        with mp.Pool(num_processes) as pool:
+            pool.starmap(
+                process_dataset,
+                [(dataset_name, url, data_dir, extract) for dataset_name, url in DATASETS.items()],
+            )
+    else:
+        print("Downloading sequentially")
+        for dataset_name, url in DATASETS.items():
+            process_dataset(dataset_name, url, data_dir, extract)
+    
+    print("=" * 60)
+    print("Download complete!")
+    print(f"\nDatasets saved to: {data_dir}")
+    if extract:
+        print("\nExtracted zarr directories:")
+        for dataset_name in DATASETS.keys():
+            zarr_dir = f"{data_dir}/{dataset_name}.zarr"
+            if os.path.exists(zarr_dir):
+                print(f"  - {zarr_dir}")
+    else:
+        print("\nZip files:")
+        for dataset_name in DATASETS.keys():
+            zip_file = f"{data_dir}/{dataset_name}.zarr.zip"
+            if os.path.exists(zip_file):
+                print(f"  - {zip_file}")
 
 
 if __name__ == "__main__":
