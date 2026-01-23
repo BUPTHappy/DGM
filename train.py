@@ -89,10 +89,26 @@ def main(cfg: OmegaConf):
         strict_loading = getattr(cfg, 'strict_loading', False)
         print(f"strict_loading from config: {strict_loading}")
         
+        # Check if we should exclude action diffusion head (for fine-tuning with modified architecture)
+        exclude_diffhead = getattr(cfg, 'exclude_diffhead_on_load', False)
+        
         if cfg.training.use_ema:
-            workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, diffhead_finetuning=False, strict=strict_loading)
+            # If exclude_diffhead_on_load is True, exclude diffusion head even when using EMA
+            workspace.load_payload_new(
+                payload, 
+                exclude_keys=None, 
+                include_keys=None, 
+                diffhead_finetuning=exclude_diffhead, 
+                strict=strict_loading
+            )
         else:
-            workspace.load_payload_new(payload, exclude_keys=['ema_model'], include_keys=None, diffhead_finetuning=True, strict=strict_loading)
+            workspace.load_payload_new(
+                payload, 
+                exclude_keys=['ema_model'], 
+                include_keys=None, 
+                diffhead_finetuning=True,  # Always exclude diffhead when not using EMA
+                strict=strict_loading
+            )
 
     if cfg.freeze_submodules:
         workspace.freeze_submodules(action_only=True)
