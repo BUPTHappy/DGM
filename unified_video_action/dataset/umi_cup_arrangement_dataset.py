@@ -50,9 +50,10 @@ class UmiCupArrangementDataset(BaseImageDataset):
         available_keys = list(data_group.keys())
         print(f"Available keys in dataset['data']: {available_keys}")
         
-        # Try to find image key (common names: img, image, rgb)
+        # Try to find image key (common names: img, image, rgb, camera0_rgb, etc.)
         image_key = None
-        for key in ["img", "image", "rgb"]:
+        # Check for common image key names
+        for key in ["img", "image", "rgb", "camera0_rgb", "camera_rgb"]:
             if key in available_keys:
                 image_key = key
                 break
@@ -64,7 +65,7 @@ class UmiCupArrangementDataset(BaseImageDataset):
                 if isinstance(obs_item, zarr.Group):
                     obs_keys = list(obs_item.keys())
                     print(f"Keys inside 'data/obs': {obs_keys}")
-                    for key in ["image", "rgb", "img"]:
+                    for key in ["image", "rgb", "img", "camera0_rgb", "camera_rgb"]:
                         if key in obs_keys:
                             # For ReplayBuffer, we'll need to handle this differently
                             # Let's try using "obs" as the key and handle it in _sample_to_data

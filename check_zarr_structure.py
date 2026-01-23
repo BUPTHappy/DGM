@@ -28,15 +28,21 @@ def inspect_zarr(zarr_path):
             current_prefix = "└── " if is_last else "├── "
             print(f"{prefix}{current_prefix}{key}", end="")
             
-            item = group[key]
-            if isinstance(item, zarr.Group):
-                print(" (Group)")
-                next_prefix = prefix + ("    " if is_last else "│   ")
-                print_tree(item, next_prefix, max_depth, current_depth + 1)
-            elif isinstance(item, zarr.Array):
-                print(f" (Array: shape={item.shape}, dtype={item.dtype}, chunks={item.chunks})")
-            else:
-                print(f" ({type(item).__name__})")
+            try:
+                item = group[key]
+                if isinstance(item, zarr.Group):
+                    print(" (Group)")
+                    next_prefix = prefix + ("    " if is_last else "│   ")
+                    print_tree(item, next_prefix, max_depth, current_depth + 1)
+                elif isinstance(item, zarr.Array):
+                    try:
+                        print(f" (Array: shape={item.shape}, dtype={item.dtype}, chunks={item.chunks})")
+                    except Exception as e:
+                        print(f" (Array: [cannot read metadata - {type(e).__name__}])")
+                else:
+                    print(f" ({type(item).__name__})")
+            except Exception as e:
+                print(f" (Error accessing: {type(e).__name__})")
     
     print("\nZarr Structure:")
     print_tree(store)
@@ -52,15 +58,27 @@ def inspect_zarr(zarr_path):
         print(f"  Keys in 'data': {data_keys}")
         
         for key in data_keys:
-            item = data_group[key]
-            if isinstance(item, zarr.Array):
-                print(f"  - {key}: Array shape={item.shape}, dtype={item.dtype}")
-            elif isinstance(item, zarr.Group):
-                print(f"  - {key}: Group with keys: {list(item.keys())}")
-                for subkey in item.keys():
-                    subitem = item[subkey]
-                    if isinstance(subitem, zarr.Array):
-                        print(f"    - {subkey}: Array shape={subitem.shape}, dtype={subitem.dtype}")
+            try:
+                item = data_group[key]
+                if isinstance(item, zarr.Array):
+                    try:
+                        print(f"  - {key}: Array shape={item.shape}, dtype={item.dtype}")
+                    except Exception as e:
+                        print(f"  - {key}: Array [cannot read metadata - {type(e).__name__}: {str(e)[:50]}]")
+                elif isinstance(item, zarr.Group):
+                    print(f"  - {key}: Group with keys: {list(item.keys())}")
+                    for subkey in item.keys():
+                        try:
+                            subitem = item[subkey]
+                            if isinstance(subitem, zarr.Array):
+                                try:
+                                    print(f"    - {subkey}: Array shape={subitem.shape}, dtype={subitem.dtype}")
+                                except Exception as e:
+                                    print(f"    - {subkey}: Array [cannot read metadata - {type(e).__name__}]")
+                        except Exception as e:
+                            print(f"    - {subkey}: [Error accessing - {type(e).__name__}]")
+            except Exception as e:
+                print(f"  - {key}: [Error accessing - {type(e).__name__}: {str(e)[:50]}]")
     
     if "meta" in store:
         print("\n✓ Found 'meta' group")
