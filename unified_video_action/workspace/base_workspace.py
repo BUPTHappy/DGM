@@ -87,17 +87,23 @@ class BaseWorkspace:
         
         # Load cfg if it exists in payload, unless explicitly ignored by current cfg
         # To force using the current (Hydra) cfg, set cfg.ignore_payload_cfg=true
+        # Can also be set via command line: +ignore_payload_cfg=true
         if "cfg" in payload:
             ignore_payload_cfg = False
             try:
                 # Try multiple ways to access the config value
+                # First try direct attribute access (works for command line overrides)
                 if hasattr(self.cfg, "ignore_payload_cfg"):
                     ignore_payload_cfg = self.cfg.ignore_payload_cfg
+                # Then try dictionary access
                 elif "ignore_payload_cfg" in self.cfg:
                     ignore_payload_cfg = self.cfg["ignore_payload_cfg"]
+                # Finally try OmegaConf.select as fallback
                 else:
-                    # Try OmegaConf.get as fallback
                     ignore_payload_cfg = OmegaConf.select(self.cfg, "ignore_payload_cfg", default=False)
+                
+                # Debug: print what we found
+                print(f"DEBUG: ignore_payload_cfg value: {ignore_payload_cfg} (type: {type(ignore_payload_cfg)})")
             except Exception as e:
                 print(f"Warning: Could not read ignore_payload_cfg from config: {e}")
                 ignore_payload_cfg = False
@@ -107,6 +113,8 @@ class BaseWorkspace:
                 ignore_payload_cfg = ignore_payload_cfg.lower() in ("true", "1", "yes")
             else:
                 ignore_payload_cfg = bool(ignore_payload_cfg)
+            
+            print(f"Final ignore_payload_cfg value: {ignore_payload_cfg}")
             
             if not ignore_payload_cfg:
                 print(f"Loading config from checkpoint (ignore_payload_cfg={ignore_payload_cfg})")
