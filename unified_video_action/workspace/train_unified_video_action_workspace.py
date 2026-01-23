@@ -437,6 +437,23 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
                         device,
                     )
                     step_log.update(act_log)
+                    
+                    # Also compute end-effector trajectory error and final state distance
+                    # (for datasets with robot state information like UMI)
+                    from unified_video_action.eval.eval import test_eef_trajectory_error
+                    try:
+                        eef_log = test_eef_trajectory_error(
+                            cfg,
+                            policy,
+                            val_dataloader,
+                            local_epoch_idx,
+                            self.output_dir,
+                            device,
+                        )
+                        step_log.update(eef_log)
+                    except Exception as e:
+                        # If trajectory error calculation fails (e.g., no robot0_eef_pos in obs), skip it
+                        print(f"Warning: Could not compute trajectory error: {e}")
 
                 # ========= simulator: run rollout =========            
                 if (

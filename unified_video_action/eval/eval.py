@@ -6,6 +6,7 @@ import os
 from einops import rearrange
 import torch.nn.functional as F
 import wandb
+import numpy as np
 
 from unified_video_action.fvd.fvd import get_fvd_logits, frechet_distance
 from unified_video_action.fvd.download import load_i3d_pretrained
@@ -333,8 +334,10 @@ def test_action_l2(
                 )
 
                 ## calculate l2 distance between the predicted action and ground truth action
+                # Use actual action dimension (7 for UMI single arm, 14 for dual arm, etc.)
+                action_dim = act_out.shape[-1]
                 l2_distance = torch.sqrt(
-                    torch.sum((trajectory[:, :, :9] - act_out[:, :, :9]) ** 2, dim=-1)
+                    torch.sum((trajectory[:, :, :action_dim] - act_out[:, :, :action_dim]) ** 2, dim=-1)
                 )
                 action_l2_distances.append(l2_distance.mean())
 
@@ -347,4 +350,163 @@ def test_action_l2(
             torch.stack(action_l2_distances).mean().item()
         )
 
+    return log_data
+
+
+def test_eef_trajectory_error(
+    cfg,
+    model,
+    loader,
+    it,
+    output_dir,
+    device,
+    text_model=None,
+    name_label="",
+):
+    """
+    Compute end-effector trajectory error and final state distance.
+    
+    This function:
+    1. Predicts actions from observations
+    2. Integrates actions to get predicted end-effector trajectory
+    3. Compares predicted trajectory with ground truth trajectory
+    4. Computes trajectory error and final state distance
+    
+    Returns:
+        dict with:
+        - val_eef_trajectory_error: mean L2 error across all timesteps (meters)
+        - val_final_state_distance: L2 distance at final timestep (meters)
+    """
+    trajectory_errors = []
+    final_state_distances = []
+    
+    with torch.no_grad():
+        for n, batch in enumerate(loader):
+            if n % 10 == 0:
+                print("test_eef_trajectory_error", n, len(loader))
+            
+            x = batch
+            x = dict_apply(x, lambda x: x.to(device, non_blocking=True))
+            actions = x["action"]
+            
+            # Save original obs before normalization (needed for robot0_eef_pos)
+            original_obs = {}
+            if "robot0_eef_pos" in x["obs"]:
+                original_obs["robot0_eef_pos"] = x["obs"]["robot0_eef_pos"].clone()
+            
+            if cfg.model.policy.use_history_action:
+                x = dict_apply(x, lambda x: x[:, 1:])
+                if "robot0_eef_pos" in original_obs:
+                    original_obs["robot0_eef_pos"] = original_obs["robot0_eef_pos"][:, 1:]
+            
+            x = resize_image(cfg, x)
+            
+            B, T, C, H, W = x["obs"]["image"].size()
+            
+            # Check if we have end-effector position in original obs (for UMI datasets)
+            if "robot0_eef_pos" not in original_obs:
+                # Skip if we don't have eef position data
+                if n == 0:
+                    print("Warning: robot0_eef_pos not found in obs, skipping trajectory error calculation")
+                continue
+            
+            if cfg.task.dataset.language_emb_model is not None:
+                if "language" in x["obs"]:
+                    language_goal = x["obs"]["language"]
+                    del x["obs"]["language"]
+                elif "language_latents" in x:
+                    language_goal = x["language_latents"]
+                    del x["language_latents"]
+                else:
+                    raise NotImplementedError
+            else:
+                language_goal = None
+            
+            (
+                x_processed,
+                real,
+                _,
+                c,
+                text_latents,
+                history_trajectory,
+                trajectory,
+                proprioception_input,
+            ) = prepare_data_predict_action(
+                cfg, x, actions, model, T, device, language_goal=language_goal
+            )
+            
+            z, act_out = model.model.sample_tokens(
+                bsz=B,
+                cond=c,
+                text_latents=text_latents,
+                num_iter=cfg.model.policy.autoregressive_model_params.num_iter,
+                cfg=cfg.model.policy.autoregressive_model_params.cfg,
+                cfg_schedule=cfg.model.policy.autoregressive_model_params.cfg_schedule,
+                temperature=cfg.model.policy.autoregressive_model_params.temperature,
+                history_nactions=history_trajectory,
+                nactions=trajectory,
+                proprioception_input=proprioception_input,
+                task_mode="policy_model",
+            )
+            
+            if cfg.model.policy.action_model_params.predict_action:
+                # Unnormalize predicted actions
+                act_out = unnormalize_future_action(
+                    normalizer=model.normalizer,
+                    normalizer_type=model.normalizer_type,
+                    actions=act_out,
+                )
+                
+                # Get ground truth end-effector trajectory from original (unnormalized) obs
+                # original_obs["robot0_eef_pos"] shape is (B, T_full, 3) where T_full includes initial state
+                gt_eef_full_trajectory = original_obs["robot0_eef_pos"]  # (B, T_full, 3)
+                initial_eef_pos = gt_eef_full_trajectory[:, 0, :]  # (B, 3)
+                gt_eef_trajectory = gt_eef_full_trajectory[:, 1:, :]  # (B, T_full-1, 3)
+                
+                # Extract position deltas from predicted actions
+                # Action format: [pos_delta(3), rot_delta(3), gripper_delta(1)]
+                predicted_pos_deltas = act_out[:, :, :3]  # (B, T_action, 3)
+                
+                # Integrate position deltas to get predicted trajectory
+                # predicted_pos[t+1] = predicted_pos[t] + pos_delta[t]
+                predicted_trajectory = [initial_eef_pos]  # Start with initial position
+                for t in range(predicted_pos_deltas.shape[1]):
+                    next_pos = predicted_trajectory[-1] + predicted_pos_deltas[:, t, :]
+                    predicted_trajectory.append(next_pos)
+                
+                # Stack to get (B, T_action+1, 3), then take [:, 1:, :] to get (B, T_action, 3)
+                predicted_trajectory = torch.stack(predicted_trajectory[1:], dim=1)  # (B, T_action, 3)
+                
+                # Align dimensions: take minimum length
+                min_T = min(predicted_trajectory.shape[1], gt_eef_trajectory.shape[1])
+                predicted_trajectory = predicted_trajectory[:, :min_T, :]
+                gt_eef_trajectory = gt_eef_trajectory[:, :min_T, :]
+                
+                # Compute trajectory error: L2 distance at each timestep
+                trajectory_error_per_timestep = torch.sqrt(
+                    torch.sum((predicted_trajectory - gt_eef_trajectory) ** 2, dim=-1)
+                )  # (B, min_T)
+                
+                # Mean error across all timesteps (in meters)
+                mean_trajectory_error = trajectory_error_per_timestep.mean()
+                trajectory_errors.append(mean_trajectory_error.item())
+                
+                # Final state distance: L2 distance at the last timestep (in meters)
+                final_predicted_pos = predicted_trajectory[:, -1, :]  # (B, 3)
+                final_gt_pos = gt_eef_trajectory[:, -1, :]  # (B, 3)
+                final_state_distance = torch.sqrt(
+                    torch.sum((final_predicted_pos - final_gt_pos) ** 2, dim=-1)
+                ).mean()
+                final_state_distances.append(final_state_distance.item())
+            
+            if cfg.training.debug:
+                break
+    
+    log_data = dict()
+    if len(trajectory_errors) > 0:
+        log_data[f"{name_label}val_eef_trajectory_error"] = np.mean(trajectory_errors)
+        log_data[f"{name_label}val_final_state_distance"] = np.mean(final_state_distances)
+        print(f"  Trajectory error: {np.mean(trajectory_errors):.4f} m")
+        print(f"  Final state distance: {np.mean(final_state_distances):.4f} m")
+    
     return log_data
