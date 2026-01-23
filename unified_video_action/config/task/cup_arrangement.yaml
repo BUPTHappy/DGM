@@ -1,0 +1,38 @@
+name: cup_arrangement
+task_type: single_dataset
+task_modes: []
+
+shape_meta:
+  image_resolution: 128  # Adjust based on actual image resolution in dataset
+  action:
+    shape:
+    - 14  # UMI bimanual action space is typically 14D (7 per arm)
+  obs:
+    image:
+      shape:
+      - 3
+      - 128
+      - 128
+      type: rgb
+    # Add agent_pos if state information is available in the dataset
+    # agent_pos:
+    #   shape:
+    #   - 2
+    #   type: low_dim
+
+dataset:
+  _target_: unified_video_action.dataset.umi_cup_arrangement_dataset.UmiCupArrangementDataset
+  language_emb_model: null
+  horizon: 32
+  pad_after: 7
+  pad_before: 1
+  seed: 42
+  val_ratio: 0.02
+  data_aug: true
+  normalizer_type: all
+  dataset_path: data/cup_arrangement.zarr  # Update with actual path
+  dataset_type: singletask
+
+# No env_runner for real-world dataset - validation will use action L2 error
+# env_runner:
+#   _target_: unified_video_action.env_runner.pusht_image_runner.PushTImageRunner
