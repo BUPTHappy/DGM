@@ -89,8 +89,24 @@ def main(cfg: OmegaConf):
         strict_loading = getattr(cfg, 'strict_loading', False)
         print(f"strict_loading from config: {strict_loading}")
         
+        # Check ignore_payload_cfg setting
+        ignore_payload_cfg = False
+        try:
+            if hasattr(cfg, "ignore_payload_cfg"):
+                ignore_payload_cfg = cfg.ignore_payload_cfg
+            elif "ignore_payload_cfg" in cfg:
+                ignore_payload_cfg = cfg["ignore_payload_cfg"]
+            if isinstance(ignore_payload_cfg, str):
+                ignore_payload_cfg = ignore_payload_cfg.lower() in ("true", "1", "yes")
+            else:
+                ignore_payload_cfg = bool(ignore_payload_cfg)
+        except Exception as e:
+            print(f"Warning: Could not read ignore_payload_cfg: {e}")
+        print(f"ignore_payload_cfg from config: {ignore_payload_cfg}")
+        
         # Check if we should exclude action diffusion head (for fine-tuning with modified architecture)
         exclude_diffhead = getattr(cfg, 'exclude_diffhead_on_load', False)
+        print(f"exclude_diffhead_on_load from config: {exclude_diffhead}")
         
         if cfg.training.use_ema:
             # If exclude_diffhead_on_load is True, exclude diffusion head even when using EMA

@@ -88,12 +88,31 @@ class BaseWorkspace:
         # Load cfg if it exists in payload, unless explicitly ignored by current cfg
         # To force using the current (Hydra) cfg, set cfg.ignore_payload_cfg=true
         if "cfg" in payload:
+            ignore_payload_cfg = False
             try:
-                ignore_payload_cfg = getattr(self.cfg, "ignore_payload_cfg", False)
-            except Exception:
+                # Try multiple ways to access the config value
+                if hasattr(self.cfg, "ignore_payload_cfg"):
+                    ignore_payload_cfg = self.cfg.ignore_payload_cfg
+                elif "ignore_payload_cfg" in self.cfg:
+                    ignore_payload_cfg = self.cfg["ignore_payload_cfg"]
+                else:
+                    # Try OmegaConf.get as fallback
+                    ignore_payload_cfg = OmegaConf.select(self.cfg, "ignore_payload_cfg", default=False)
+            except Exception as e:
+                print(f"Warning: Could not read ignore_payload_cfg from config: {e}")
                 ignore_payload_cfg = False
+            
+            # Convert to bool if it's a string (common in YAML)
+            if isinstance(ignore_payload_cfg, str):
+                ignore_payload_cfg = ignore_payload_cfg.lower() in ("true", "1", "yes")
+            else:
+                ignore_payload_cfg = bool(ignore_payload_cfg)
+            
             if not ignore_payload_cfg:
+                print(f"Loading config from checkpoint (ignore_payload_cfg={ignore_payload_cfg})")
                 self.cfg = payload["cfg"]
+            else:
+                print(f"Ignoring config from checkpoint (ignore_payload_cfg={ignore_payload_cfg}), using current config")
 
         if (
             "lr_scheduler" not in self.__dict__
