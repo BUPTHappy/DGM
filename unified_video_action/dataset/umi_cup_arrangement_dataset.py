@@ -188,6 +188,12 @@ class UmiCupArrangementDataset(BaseImageDataset):
         else:
             data["action"] = self.replay_buffer["action"]
         
+        # Also fit normalizers for obs fields (needed for normalization during training)
+        # These are the state fields that will be in obs
+        data["robot0_eef_pos"] = self.replay_buffer["robot0_eef_pos"]
+        data["robot0_eef_rot_axis_angle"] = self.replay_buffer["robot0_eef_rot_axis_angle"]
+        data["robot0_gripper_width"] = self.replay_buffer["robot0_gripper_width"]
+        
         normalizer = LinearNormalizer()
         normalizer.fit(data=data, last_n_dims=1, mode=mode, **kwargs)
         normalizer["image"] = get_image_range_normalizer()
