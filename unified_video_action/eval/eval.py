@@ -457,6 +457,13 @@ def test_eef_trajectory_error(
                     actions=act_out,
                 )
                 
+                # Also unnormalize ground truth actions for comparison
+                gt_actions = unnormalize_future_action(
+                    normalizer=model.normalizer,
+                    normalizer_type=model.normalizer_type,
+                    actions=trajectory,
+                )
+                
                 # Get ground truth end-effector trajectory from original (unnormalized) obs
                 # original_obs["robot0_eef_pos"] shape is (B, T_full, 3) where T_full includes initial state
                 gt_eef_full_trajectory = original_obs["robot0_eef_pos"]  # (B, T_full, 3)
@@ -466,6 +473,19 @@ def test_eef_trajectory_error(
                 # Extract position deltas from predicted actions
                 # Action format: [pos_delta(3), rot_delta(3), gripper_delta(1)]
                 predicted_pos_deltas = act_out[:, :, :3]  # (B, T_action, 3)
+                gt_pos_deltas = gt_actions[:, :, :3]  # (B, T_action, 3)
+                
+                # Debug: Check action magnitudes (only for first batch, first sample)
+                if n == 0 and len(trajectory_errors) == 0:
+                    pred_action_mag = torch.norm(predicted_pos_deltas[0], dim=-1).mean().item()
+                    gt_action_mag = torch.norm(gt_pos_deltas[0], dim=-1).mean().item()
+                    print(f"  Debug - Predicted action magnitude: {pred_action_mag:.6f} m/step")
+                    print(f"  Debug - Ground truth action magnitude: {gt_action_mag:.6f} m/step")
+                    print(f"  Debug - Initial eef pos: {initial_eef_pos[0].cpu().numpy()}")
+                    print(f"  Debug - Final gt eef pos: {gt_eef_trajectory[0, -1].cpu().numpy()}")
+                    print(f"  Debug - Trajectory length: {gt_eef_trajectory.shape[1]} steps")
+                    total_gt_displacement = torch.norm(gt_eef_trajectory[0, -1] - initial_eef_pos[0]).item()
+                    print(f"  Debug - Total GT displacement: {total_gt_displacement:.4f} m")
                 
                 # Integrate position deltas to get predicted trajectory
                 # predicted_pos[t+1] = predicted_pos[t] + pos_delta[t]
@@ -481,6 +501,13 @@ def test_eef_trajectory_error(
                 min_T = min(predicted_trajectory.shape[1], gt_eef_trajectory.shape[1])
                 predicted_trajectory = predicted_trajectory[:, :min_T, :]
                 gt_eef_trajectory = gt_eef_trajectory[:, :min_T, :]
+                
+                # Debug: Check predicted final position (only for first batch, first sample)
+                if n == 0 and len(trajectory_errors) == 0:
+                    pred_final_pos = predicted_trajectory[0, -1].cpu().numpy()
+                    print(f"  Debug - Predicted final eef pos: {pred_final_pos}")
+                    pred_total_displacement = torch.norm(predicted_trajectory[0, -1] - initial_eef_pos[0]).item()
+                    print(f"  Debug - Total predicted displacement: {pred_total_displacement:.4f} m")
                 
                 # Compute trajectory error: L2 distance at each timestep
                 trajectory_error_per_timestep = torch.sqrt(
