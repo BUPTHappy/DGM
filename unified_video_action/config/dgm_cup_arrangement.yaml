@@ -30,6 +30,7 @@ training:
   max_val_steps: null
   num_epochs: 200
   resume: true
+  resume_checkpoint_path: null  # Set to checkpoint path to resume from specific checkpoint, or null to use latest.ckpt
   rollout_every: 1
   sample_every: 5
   seed: 42
