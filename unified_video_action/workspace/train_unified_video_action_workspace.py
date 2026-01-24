@@ -275,10 +275,20 @@ class TrainUnifiedVideoActionWorkspace(BaseWorkspace):
 
         # resume training
         if cfg.training.resume:
-            lastest_ckpt_path = self.get_checkpoint_path()
+            # Allow specifying custom checkpoint path via config or use default
+            resume_ckpt_path = getattr(cfg.training, "resume_checkpoint_path", None)
+            if resume_ckpt_path:
+                # Use specified path (can be absolute or relative)
+                lastest_ckpt_path = pathlib.Path(resume_ckpt_path)
+            else:
+                # Use default path: {output_dir}/checkpoints/latest.ckpt
+                lastest_ckpt_path = self.get_checkpoint_path()
+            
             if lastest_ckpt_path.is_file():
                 accelerator.print(f"Resuming from checkpoint {lastest_ckpt_path}") 
                 self.load_checkpoint(path=lastest_ckpt_path)
+            else:
+                accelerator.print(f"Warning: Resume checkpoint not found at {lastest_ckpt_path}, starting from scratch")
 
         # configure ema
         ema: EMAModel = None
