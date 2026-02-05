@@ -105,6 +105,11 @@ def inspect_zarr(zarr_path):
 if __name__ == "__main__":
     # Try common paths
     possible_paths = [
+        # Bimanual datasets
+        "data/dish_washing_0.zarr",
+        "data/cloth_folding_0.zarr",
+        "data/dynamic_tossing_0.zarr",
+        # Cup arrangement datasets
         "data/cup_in_the_lab.zarr",
         "data/cup_arrangement_1.zarr",
         "cup_in_the_lab.zarr",

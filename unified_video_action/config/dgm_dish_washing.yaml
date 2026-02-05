@@ -1,0 +1,99 @@
+name: uva
+
+defaults:
+  - _self_
+  - task: dish_washing
+  - model: dgm
+
+dataloader:
+  batch_size: 32
+  num_workers: 8
+  persistent_workers: false
+  pin_memory: true
+  shuffle: true
+
+val_dataloader:
+  batch_size: 32
+  num_workers: 8
+  persistent_workers: false
+  pin_memory: true
+  shuffle: false
+
+training:
+  checkpoint_every: 10
+  debug: false
+  device: cuda:0
+  gradient_accumulate_every: 1
+  lr_scheduler: cosine
+  lr_warmup_steps: 1000
+  max_train_steps: null
+  max_val_steps: null
+  num_epochs: 200
+  resume: true
+  resume_checkpoint_path: null  # Set to checkpoint path to resume from specific checkpoint, or null to use latest.ckpt
+  rollout_every: 1
+  sample_every: 5
+  seed: 42
+  tqdm_interval_sec: 1.0
+  use_ema: true
+  val_every: 1
+  mixed_precision: "fp16"
+
+checkpoint:
+  save_last_ckpt: true
+  save_last_snapshot: false
+  topk:
+    monitor_key: val_action_l2_distances  # For real-world datasets without env_runner, use action L2 error
+    format_str: epoch={epoch:04d}-val_action_l2={val_action_l2_distances:.3f}.ckpt
+    k: 1
+    mode: min  # Lower is better for L2 error
+
+ema:
+  _target_: unified_video_action.model.autoregressive.ema_model.EMAModel
+  inv_gamma: 1.0
+  max_value: 0.9999
+  min_value: 0.0
+  power: 0.75
+  update_after_step: 0
+
+logging:
+  group: null
+  id: null
+  mode: online
+  name: train_dish_washing_dgm
+  project: unified_video_action
+  resume: false
+  tags:
+    - train_dish_washing
+    - dish_washing
+    - dgm
+    - umi
+    - bimanual
+
+multi_run:
+  run_dir: data/outputs/train_dish_washing_dgm
+  wandb_name_base: train_dish_washing_dgm
+
+# Pretrained checkpoint path (set to null to train from scratch)
+# If loading a checkpoint, set ignore_payload_cfg=true to use current config instead of checkpoint config
+payload: checkpoints/umi_multitask.ckpt
+freeze_submodules: true
+strict_loading: false
+ignore_payload_cfg: true  # Ignore config from checkpoint, use current config instead
+exclude_diffhead_on_load: true  # Exclude action diffusion head when loading (for fine-tuning with modified architecture)
+
+save_folder: ./logs/time_logs/dish_washing_dgm
+
+# Bayesian Optimization Configuration - DISABLED for default training
+bayesian_optimization:
+  enabled: false
+  optimization_mode: "balanced"
+  start_epoch: 140
+  interval: 10
+  max_trials: 10
+  final_trials: 15
+  n_test: 5
+  final_n_test: 8
+  device: cuda:0
+  output_dir: ./bayesian_optimization_logs
+  use_best_checkpoint_for_final: true

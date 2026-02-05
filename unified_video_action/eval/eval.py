@@ -366,6 +366,10 @@ def test_eef_trajectory_error(
     """
     Compute end-effector trajectory error and final state distance.
     
+    Supports both single-arm and bimanual (dual-arm) tasks:
+    - Single-arm: action dim 7, uses robot0_eef_pos
+    - Bimanual: action dim 14, uses robot0_eef_pos and robot1_eef_pos
+    
     This function:
     1. Predicts actions from observations
     2. Integrates actions to get predicted end-effector trajectory
@@ -376,9 +380,19 @@ def test_eef_trajectory_error(
         dict with:
         - val_eef_trajectory_error: mean L2 error across all timesteps (meters)
         - val_final_state_distance: L2 distance at final timestep (meters)
+        For bimanual tasks, also includes:
+        - val_eef_trajectory_error_robot0/robot1: per-arm trajectory errors
+        - val_final_state_distance_robot0/robot1: per-arm final state distances
     """
     trajectory_errors = []
     final_state_distances = []
+    # For bimanual tasks
+    trajectory_errors_robot0 = []
+    trajectory_errors_robot1 = []
+    final_state_distances_robot0 = []
+    final_state_distances_robot1 = []
+    
+    is_bimanual = None  # Will be determined from data
     
     with torch.no_grad():
         for n, batch in enumerate(loader):
@@ -389,15 +403,28 @@ def test_eef_trajectory_error(
             x = dict_apply(x, lambda x: x.to(device, non_blocking=True))
             actions = x["action"]
             
-            # Save original obs before normalization (needed for robot0_eef_pos)
+            # Detect if this is a bimanual task based on action dimension
+            action_dim = actions.shape[-1]
+            if is_bimanual is None:
+                is_bimanual = action_dim == 14
+                if is_bimanual:
+                    print("  Detected bimanual task (action_dim=14)")
+                else:
+                    print(f"  Detected single-arm task (action_dim={action_dim})")
+            
+            # Save original obs before normalization (needed for robot_eef_pos)
             original_obs = {}
             if "robot0_eef_pos" in x["obs"]:
                 original_obs["robot0_eef_pos"] = x["obs"]["robot0_eef_pos"].clone()
+            if is_bimanual and "robot1_eef_pos" in x["obs"]:
+                original_obs["robot1_eef_pos"] = x["obs"]["robot1_eef_pos"].clone()
             
             if cfg.model.policy.use_history_action:
                 x = dict_apply(x, lambda x: x[:, 1:])
                 if "robot0_eef_pos" in original_obs:
                     original_obs["robot0_eef_pos"] = original_obs["robot0_eef_pos"][:, 1:]
+                if "robot1_eef_pos" in original_obs:
+                    original_obs["robot1_eef_pos"] = original_obs["robot1_eef_pos"][:, 1:]
             
             x = resize_image(cfg, x)
             
@@ -408,6 +435,11 @@ def test_eef_trajectory_error(
                 # Skip if we don't have eef position data
                 if n == 0:
                     print("Warning: robot0_eef_pos not found in obs, skipping trajectory error calculation")
+                continue
+            
+            if is_bimanual and "robot1_eef_pos" not in original_obs:
+                if n == 0:
+                    print("Warning: robot1_eef_pos not found for bimanual task, skipping trajectory error calculation")
                 continue
             
             if cfg.task.dataset.language_emb_model is not None:
@@ -464,67 +496,119 @@ def test_eef_trajectory_error(
                     actions=trajectory,
                 )
                 
-                # Get ground truth end-effector trajectory from original (unnormalized) obs
-                # original_obs["robot0_eef_pos"] shape is (B, T_full, 3) where T_full includes initial state
-                gt_eef_full_trajectory = original_obs["robot0_eef_pos"]  # (B, T_full, 3)
-                initial_eef_pos = gt_eef_full_trajectory[:, 0, :]  # (B, 3)
-                gt_eef_trajectory = gt_eef_full_trajectory[:, 1:, :]  # (B, T_full-1, 3)
-                
-                # Extract position deltas from predicted actions
-                # Action format: [pos_delta(3), rot_delta(3), gripper_delta(1)]
-                predicted_pos_deltas = act_out[:, :, :3]  # (B, T_action, 3)
-                gt_pos_deltas = gt_actions[:, :, :3]  # (B, T_action, 3)
-                
-                # Debug: Check action magnitudes (only for first batch, first sample)
-                if n == 0 and len(trajectory_errors) == 0:
-                    pred_action_mag = torch.norm(predicted_pos_deltas[0], dim=-1).mean().item()
-                    gt_action_mag = torch.norm(gt_pos_deltas[0], dim=-1).mean().item()
-                    print(f"  Debug - Predicted action magnitude: {pred_action_mag:.6f} m/step")
-                    print(f"  Debug - Ground truth action magnitude: {gt_action_mag:.6f} m/step")
-                    print(f"  Debug - Initial eef pos: {initial_eef_pos[0].cpu().numpy()}")
-                    print(f"  Debug - Final gt eef pos: {gt_eef_trajectory[0, -1].cpu().numpy()}")
-                    print(f"  Debug - Trajectory length: {gt_eef_trajectory.shape[1]} steps")
-                    total_gt_displacement = torch.norm(gt_eef_trajectory[0, -1] - initial_eef_pos[0]).item()
-                    print(f"  Debug - Total GT displacement: {total_gt_displacement:.4f} m")
-                
-                # Integrate position deltas to get predicted trajectory
-                # predicted_pos[t+1] = predicted_pos[t] + pos_delta[t]
-                predicted_trajectory = [initial_eef_pos]  # Start with initial position
-                for t in range(predicted_pos_deltas.shape[1]):
-                    next_pos = predicted_trajectory[-1] + predicted_pos_deltas[:, t, :]
-                    predicted_trajectory.append(next_pos)
-                
-                # Stack to get (B, T_action+1, 3), then take [:, 1:, :] to get (B, T_action, 3)
-                predicted_trajectory = torch.stack(predicted_trajectory[1:], dim=1)  # (B, T_action, 3)
-                
-                # Align dimensions: take minimum length
-                min_T = min(predicted_trajectory.shape[1], gt_eef_trajectory.shape[1])
-                predicted_trajectory = predicted_trajectory[:, :min_T, :]
-                gt_eef_trajectory = gt_eef_trajectory[:, :min_T, :]
-                
-                # Debug: Check predicted final position (only for first batch, first sample)
-                if n == 0 and len(trajectory_errors) == 0:
-                    pred_final_pos = predicted_trajectory[0, -1].cpu().numpy()
-                    print(f"  Debug - Predicted final eef pos: {pred_final_pos}")
-                    pred_total_displacement = torch.norm(predicted_trajectory[0, -1] - initial_eef_pos[0]).item()
-                    print(f"  Debug - Total predicted displacement: {pred_total_displacement:.4f} m")
-                
-                # Compute trajectory error: L2 distance at each timestep
-                trajectory_error_per_timestep = torch.sqrt(
-                    torch.sum((predicted_trajectory - gt_eef_trajectory) ** 2, dim=-1)
-                )  # (B, min_T)
-                
-                # Mean error across all timesteps (in meters)
-                mean_trajectory_error = trajectory_error_per_timestep.mean()
-                trajectory_errors.append(mean_trajectory_error.item())
-                
-                # Final state distance: L2 distance at the last timestep (in meters)
-                final_predicted_pos = predicted_trajectory[:, -1, :]  # (B, 3)
-                final_gt_pos = gt_eef_trajectory[:, -1, :]  # (B, 3)
-                final_state_distance = torch.sqrt(
-                    torch.sum((final_predicted_pos - final_gt_pos) ** 2, dim=-1)
-                ).mean()
-                final_state_distances.append(final_state_distance.item())
+                if is_bimanual:
+                    # Bimanual task: process both robot0 and robot1
+                    # Action format: [pos0(3), rot0(3), gripper0(1), pos1(3), rot1(3), gripper1(1)] = 14D
+                    
+                    def compute_trajectory_error_for_arm(arm_idx, pos_start_idx, eef_key):
+                        """Helper to compute trajectory error for one arm"""
+                        gt_eef_full_trajectory = original_obs[eef_key]  # (B, T_full, 3)
+                        initial_eef_pos = gt_eef_full_trajectory[:, 0, :]  # (B, 3)
+                        gt_eef_trajectory = gt_eef_full_trajectory[:, 1:, :]  # (B, T_full-1, 3)
+                        
+                        # Extract position deltas for this arm
+                        predicted_pos_deltas = act_out[:, :, pos_start_idx:pos_start_idx+3]  # (B, T_action, 3)
+                        
+                        # Debug info for first batch
+                        if n == 0 and len(trajectory_errors) == 0:
+                            pred_action_mag = torch.norm(predicted_pos_deltas[0], dim=-1).mean().item()
+                            print(f"  Debug robot{arm_idx} - Predicted action magnitude: {pred_action_mag:.6f} m/step")
+                        
+                        # Integrate position deltas
+                        predicted_trajectory = [initial_eef_pos]
+                        for t in range(predicted_pos_deltas.shape[1]):
+                            next_pos = predicted_trajectory[-1] + predicted_pos_deltas[:, t, :]
+                            predicted_trajectory.append(next_pos)
+                        predicted_trajectory = torch.stack(predicted_trajectory[1:], dim=1)  # (B, T_action, 3)
+                        
+                        # Align dimensions
+                        min_T = min(predicted_trajectory.shape[1], gt_eef_trajectory.shape[1])
+                        predicted_trajectory = predicted_trajectory[:, :min_T, :]
+                        gt_eef_trajectory = gt_eef_trajectory[:, :min_T, :]
+                        
+                        # Compute trajectory error
+                        trajectory_error_per_timestep = torch.sqrt(
+                            torch.sum((predicted_trajectory - gt_eef_trajectory) ** 2, dim=-1)
+                        )
+                        mean_trajectory_error = trajectory_error_per_timestep.mean().item()
+                        
+                        # Final state distance
+                        final_state_distance = torch.sqrt(
+                            torch.sum((predicted_trajectory[:, -1, :] - gt_eef_trajectory[:, -1, :]) ** 2, dim=-1)
+                        ).mean().item()
+                        
+                        return mean_trajectory_error, final_state_distance
+                    
+                    # Robot 0: position deltas at indices 0:3
+                    traj_err_0, final_dist_0 = compute_trajectory_error_for_arm(0, 0, "robot0_eef_pos")
+                    trajectory_errors_robot0.append(traj_err_0)
+                    final_state_distances_robot0.append(final_dist_0)
+                    
+                    # Robot 1: position deltas at indices 7:10 (after robot0's 7D action)
+                    traj_err_1, final_dist_1 = compute_trajectory_error_for_arm(1, 7, "robot1_eef_pos")
+                    trajectory_errors_robot1.append(traj_err_1)
+                    final_state_distances_robot1.append(final_dist_1)
+                    
+                    # Combined error (average of both arms)
+                    trajectory_errors.append((traj_err_0 + traj_err_1) / 2)
+                    final_state_distances.append((final_dist_0 + final_dist_1) / 2)
+                    
+                else:
+                    # Single-arm task (original logic)
+                    gt_eef_full_trajectory = original_obs["robot0_eef_pos"]  # (B, T_full, 3)
+                    initial_eef_pos = gt_eef_full_trajectory[:, 0, :]  # (B, 3)
+                    gt_eef_trajectory = gt_eef_full_trajectory[:, 1:, :]  # (B, T_full-1, 3)
+                    
+                    # Extract position deltas from predicted actions
+                    # Action format: [pos_delta(3), rot_delta(3), gripper_delta(1)]
+                    predicted_pos_deltas = act_out[:, :, :3]  # (B, T_action, 3)
+                    gt_pos_deltas = gt_actions[:, :, :3]  # (B, T_action, 3)
+                    
+                    # Debug: Check action magnitudes (only for first batch, first sample)
+                    if n == 0 and len(trajectory_errors) == 0:
+                        pred_action_mag = torch.norm(predicted_pos_deltas[0], dim=-1).mean().item()
+                        gt_action_mag = torch.norm(gt_pos_deltas[0], dim=-1).mean().item()
+                        print(f"  Debug - Predicted action magnitude: {pred_action_mag:.6f} m/step")
+                        print(f"  Debug - Ground truth action magnitude: {gt_action_mag:.6f} m/step")
+                        print(f"  Debug - Initial eef pos: {initial_eef_pos[0].cpu().numpy()}")
+                        print(f"  Debug - Final gt eef pos: {gt_eef_trajectory[0, -1].cpu().numpy()}")
+                        print(f"  Debug - Trajectory length: {gt_eef_trajectory.shape[1]} steps")
+                        total_gt_displacement = torch.norm(gt_eef_trajectory[0, -1] - initial_eef_pos[0]).item()
+                        print(f"  Debug - Total GT displacement: {total_gt_displacement:.4f} m")
+                    
+                    # Integrate position deltas to get predicted trajectory
+                    predicted_trajectory = [initial_eef_pos]
+                    for t in range(predicted_pos_deltas.shape[1]):
+                        next_pos = predicted_trajectory[-1] + predicted_pos_deltas[:, t, :]
+                        predicted_trajectory.append(next_pos)
+                    predicted_trajectory = torch.stack(predicted_trajectory[1:], dim=1)  # (B, T_action, 3)
+                    
+                    # Align dimensions
+                    min_T = min(predicted_trajectory.shape[1], gt_eef_trajectory.shape[1])
+                    predicted_trajectory = predicted_trajectory[:, :min_T, :]
+                    gt_eef_trajectory = gt_eef_trajectory[:, :min_T, :]
+                    
+                    # Debug: Check predicted final position
+                    if n == 0 and len(trajectory_errors) == 0:
+                        pred_final_pos = predicted_trajectory[0, -1].cpu().numpy()
+                        print(f"  Debug - Predicted final eef pos: {pred_final_pos}")
+                        pred_total_displacement = torch.norm(predicted_trajectory[0, -1] - initial_eef_pos[0]).item()
+                        print(f"  Debug - Total predicted displacement: {pred_total_displacement:.4f} m")
+                    
+                    # Compute trajectory error
+                    trajectory_error_per_timestep = torch.sqrt(
+                        torch.sum((predicted_trajectory - gt_eef_trajectory) ** 2, dim=-1)
+                    )
+                    mean_trajectory_error = trajectory_error_per_timestep.mean()
+                    trajectory_errors.append(mean_trajectory_error.item())
+                    
+                    # Final state distance
+                    final_predicted_pos = predicted_trajectory[:, -1, :]
+                    final_gt_pos = gt_eef_trajectory[:, -1, :]
+                    final_state_distance = torch.sqrt(
+                        torch.sum((final_predicted_pos - final_gt_pos) ** 2, dim=-1)
+                    ).mean()
+                    final_state_distances.append(final_state_distance.item())
             
             if cfg.training.debug:
                 break
@@ -535,5 +619,14 @@ def test_eef_trajectory_error(
         log_data[f"{name_label}val_final_state_distance"] = np.mean(final_state_distances)
         print(f"  Trajectory error: {np.mean(trajectory_errors):.4f} m")
         print(f"  Final state distance: {np.mean(final_state_distances):.4f} m")
+        
+        # Log per-arm metrics for bimanual tasks
+        if is_bimanual and len(trajectory_errors_robot0) > 0:
+            log_data[f"{name_label}val_eef_trajectory_error_robot0"] = np.mean(trajectory_errors_robot0)
+            log_data[f"{name_label}val_eef_trajectory_error_robot1"] = np.mean(trajectory_errors_robot1)
+            log_data[f"{name_label}val_final_state_distance_robot0"] = np.mean(final_state_distances_robot0)
+            log_data[f"{name_label}val_final_state_distance_robot1"] = np.mean(final_state_distances_robot1)
+            print(f"  Robot0 trajectory error: {np.mean(trajectory_errors_robot0):.4f} m")
+            print(f"  Robot1 trajectory error: {np.mean(trajectory_errors_robot1):.4f} m")
     
     return log_data
