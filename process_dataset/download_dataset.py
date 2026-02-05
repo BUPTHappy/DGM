@@ -7,26 +7,27 @@ import click
 
 PROJECT_NAME = "uva"
 
-# UMI Cup Arrangement datasets
-# cup_arrangement_1 (lab) is smaller and faster for quick experiments
-# cup_arrangement_0 (wild) is larger with more diverse real-world scenarios
+# UMI Bimanual datasets
 ALL_DATASETS = {
-    "cup_arrangement_0": {
-        "url": "https://real.stanford.edu/umi/data/cup_in_the_wild/cup_in_the_wild.zarr.zip",
-        "name": "cup_in_the_wild",
-        "description": "Larger dataset with diverse real-world scenarios"
+    "dish_washing_0": {
+        "url": "https://real.stanford.edu/umi/data/dish_washing/bimanual_dish_washing.zarr.zip",
+        "name": "bimanual_dish_washing",
+        "description": "Bimanual dish washing task"
     },
-    "cup_arrangement_1": {
-        "url": "https://real.stanford.edu/umi/data/cup_arrangement/cup_in_the_lab.zarr.zip",
-        "name": "cup_in_the_lab",
-        "description": "Smaller dataset, faster for quick experiments (recommended for fast training)"
+    "cloth_folding_0": {
+        "url": "https://real.stanford.edu/umi/data/bimanual_cloth_folding/bimanual_cloth_folding.zarr.zip",
+        "name": "bimanual_cloth_folding",
+        "description": "Bimanual cloth folding task"
+    },
+    "dynamic_tossing_0": {
+        "url": "https://real.stanford.edu/umi/data/dynamic_tossing/dynamic_tossing.zarr.zip",
+        "name": "dynamic_tossing",
+        "description": "Dynamic tossing task"
     },
 }
 
-# Default: only download lab dataset (smaller, faster)
-DATASETS = {
-    "cup_arrangement_1": ALL_DATASETS["cup_arrangement_1"]["url"]
-}
+# Default: download all three datasets
+DATASETS = {k: v["url"] for k, v in ALL_DATASETS.items()}
 
 
 def download_data(dataset_name: str, url: str, output_dir: str) -> None:
@@ -218,23 +219,26 @@ def process_dataset(dataset_name: str, dataset_url: str, data_dir: str, extract:
 @click.option("--data_dir", type=str, default="data", help="Directory to save datasets (default: data)")
 @click.option("--extract/--no-extract", default=True, help="Extract zip files after downloading (default: True)")
 @click.option("--parallel/--no-parallel", default=True, help="Download datasets in parallel (default: True)")
-@click.option("--dataset", type=click.Choice(["lab", "wild", "both"], case_sensitive=False), 
-              default="lab", help="Which dataset to download: lab (smaller, faster), wild (larger), or both (default: lab)")
+@click.option("--dataset", type=click.Choice(["dish", "cloth", "toss", "all"], case_sensitive=False), 
+              default="all", help="Which dataset to download: dish (dish_washing), cloth (cloth_folding), toss (dynamic_tossing), or all (default: all)")
 def main(data_dir: str, extract: bool, parallel: bool, dataset: str):
     """
-    Download UMI cup arrangement datasets.
+    Download UMI bimanual datasets.
     
     Options:
-    - lab: cup_in_the_lab (smaller, faster for quick experiments) [RECOMMENDED]
-    - wild: cup_in_the_wild (larger, more diverse)
-    - both: download both datasets
+    - dish: bimanual_dish_washing
+    - cloth: bimanual_cloth_folding
+    - toss: dynamic_tossing
+    - all: download all three datasets
     """
     # Select datasets based on choice
     selected_datasets = {}
-    if dataset.lower() == "lab" or dataset.lower() == "both":
-        selected_datasets["cup_arrangement_1"] = ALL_DATASETS["cup_arrangement_1"]["url"]
-    if dataset.lower() == "wild" or dataset.lower() == "both":
-        selected_datasets["cup_arrangement_0"] = ALL_DATASETS["cup_arrangement_0"]["url"]
+    if dataset.lower() == "dish" or dataset.lower() == "all":
+        selected_datasets["dish_washing_0"] = ALL_DATASETS["dish_washing_0"]["url"]
+    if dataset.lower() == "cloth" or dataset.lower() == "all":
+        selected_datasets["cloth_folding_0"] = ALL_DATASETS["cloth_folding_0"]["url"]
+    if dataset.lower() == "toss" or dataset.lower() == "all":
+        selected_datasets["dynamic_tossing_0"] = ALL_DATASETS["dynamic_tossing_0"]["url"]
     
     if not selected_datasets:
         print("Error: No datasets selected")
@@ -242,7 +246,7 @@ def main(data_dir: str, extract: bool, parallel: bool, dataset: str):
     
     os.makedirs(data_dir, exist_ok=True)
     
-    print(f"Downloading {len(selected_datasets)} cup arrangement dataset(s) to {data_dir}")
+    print(f"Downloading {len(selected_datasets)} bimanual dataset(s) to {data_dir}")
     print("=" * 60)
     for name, info in ALL_DATASETS.items():
         if name in selected_datasets:
