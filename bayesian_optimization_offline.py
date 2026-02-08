@@ -417,6 +417,21 @@ def run_offline_bayesian_optimization(
         json.dump(best_params, f, indent=2, default=str)
     print(f"Best params saved to: {best_params_file}")
     
+    # Auto-save optimized checkpoint with best params baked in
+    from apply_best_params import apply_params_to_checkpoint
+    optimized_ckpt_path = os.path.join(output_dir, "optimized.ckpt")
+    print(f"\n{'='*60}")
+    print("AUTO-SAVING OPTIMIZED CHECKPOINT")
+    print(f"{'='*60}")
+    try:
+        apply_params_to_checkpoint(checkpoint_path, best_params, optimized_ckpt_path)
+        print(f"\nOptimized checkpoint ready! Evaluate directly:")
+        print(f"  python eval_offline.py --checkpoint {optimized_ckpt_path} --output_dir eval_results/ --use_ucgm")
+    except Exception as e:
+        print(f"Warning: Failed to save optimized checkpoint: {e}")
+        print(f"You can manually run:")
+        print(f"  python apply_best_params.py --checkpoint {checkpoint_path} --best_params {best_params_file}")
+    
     return best_params, best_score
 
 
