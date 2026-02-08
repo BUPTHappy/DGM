@@ -181,8 +181,8 @@ def run_offline_bayesian_optimization(
     output_dir: str = "bayesian_optimization_results",
     max_trials: int = 20,
     device: str = "cuda:0",
-    optimization_mode: str = "balanced",
-    metric: str = "action_l2",
+    optimization_mode: str = "speed_priority",
+    metric: str = "all_combined",
     max_batches: int = None,
 ):
     """
@@ -194,7 +194,11 @@ def run_offline_bayesian_optimization(
         max_trials: Number of optimization trials
         device: CUDA device
         optimization_mode: "speed_priority", "balanced", or "performance_priority"
-        metric: Metric to optimize - "action_l2", "trajectory_error", or "combined"
+        metric: Metric to optimize:
+            - "action_l2": only action L2 distance
+            - "trajectory_error": only trajectory error (avg of both arms)
+            - "combined": weighted 0.6*action_l2 + 0.4*trajectory_error
+            - "all_combined": all metrics averaged (action_l2, traj_error_r0, traj_error_r1, final_dist_r0, final_dist_r1)
         max_batches: Max validation batches per evaluation (None = all)
     """
     os.makedirs(output_dir, exist_ok=True)
@@ -219,7 +223,13 @@ def run_offline_bayesian_optimization(
     all_trial_results = []
     
     def objective_function(params: Dict[str, Any]) -> float:
-        """Objective function for Bayesian optimization."""
+        """Objective function for Bayesian optimization.
+        
+        NOTE: The optimizer MAXIMIZES the score, but all our metrics are
+        "lower is better" (L2 error, trajectory error, etc.).
+        So we negate: score = -metric_value.
+        A score of -0.021 means the actual metric value is 0.021.
+        """
         trial_num = len(all_trial_results) + 1
         print(f"\n{'='*50}")
         print(f"Trial {trial_num}/{max_trials}")
@@ -241,17 +251,23 @@ def run_offline_bayesian_optimization(
             
             elapsed = time.time() - start_time
             
+            # Print all available metrics
+            print(f"\n  --- All Metrics ---")
+            for k, v in sorted(results.items()):
+                if isinstance(v, (int, float)):
+                    print(f"    {k}: {v:.6f}")
+            
             # Compute score based on metric
-            # Note: lower L2/error is better, but optimizer MAXIMIZES
-            # So we negate the metric
+            # NOTE: lower error = better, but optimizer MAXIMIZES
+            # So score = -(metric), higher score = lower error = better
             if metric == "action_l2":
                 val = results.get("val_action_l2_distances", None)
                 if val is None:
                     print("  No action L2 metric found!")
                     score = -1000.0
                 else:
-                    score = -val  # Negate: lower L2 = higher score
-                    print(f"  Action L2: {val:.6f} -> score: {score:.6f}")
+                    score = -val
+                    print(f"\n  >> Optimizing: Action L2 = {val:.6f} (lower is better)")
             
             elif metric == "trajectory_error":
                 val = results.get("val_eef_trajectory_error", None)
@@ -260,7 +276,7 @@ def run_offline_bayesian_optimization(
                     score = -1000.0
                 else:
                     score = -val
-                    print(f"  Trajectory Error: {val:.6f} -> score: {score:.6f}")
+                    print(f"\n  >> Optimizing: Trajectory Error = {val:.6f} (lower is better)")
             
             elif metric == "combined":
                 l2 = results.get("val_action_l2_distances", None)
@@ -268,12 +284,65 @@ def run_offline_bayesian_optimization(
                 if l2 is None:
                     score = -1000.0
                 elif traj is not None:
-                    # Weighted combination (both negated)
-                    score = -(0.6 * l2 + 0.4 * traj)
-                    print(f"  Action L2: {l2:.6f}, Traj Error: {traj:.6f} -> score: {score:.6f}")
+                    combined_val = 0.6 * l2 + 0.4 * traj
+                    score = -combined_val
+                    print(f"\n  >> Optimizing: 0.6*L2({l2:.6f}) + 0.4*TrajErr({traj:.6f}) = {combined_val:.6f}")
                 else:
                     score = -l2
-                    print(f"  Action L2: {l2:.6f} (no traj error) -> score: {score:.6f}")
+                    print(f"\n  >> Optimizing: Action L2 = {l2:.6f} (no traj error available)")
+            
+            elif metric == "all_combined":
+                # Collect all available error metrics and average them
+                metric_values = []
+                metric_names = []
+                
+                # Action L2
+                l2 = results.get("val_action_l2_distances", None)
+                if l2 is not None:
+                    metric_values.append(l2)
+                    metric_names.append(f"action_l2={l2:.6f}")
+                
+                # Per-arm trajectory errors (bimanual)
+                traj_r0 = results.get("val_eef_trajectory_error_robot0", None)
+                traj_r1 = results.get("val_eef_trajectory_error_robot1", None)
+                if traj_r0 is not None:
+                    metric_values.append(traj_r0)
+                    metric_names.append(f"traj_err_r0={traj_r0:.6f}")
+                if traj_r1 is not None:
+                    metric_values.append(traj_r1)
+                    metric_names.append(f"traj_err_r1={traj_r1:.6f}")
+                
+                # Per-arm final state distances (bimanual)
+                final_r0 = results.get("val_final_state_distance_robot0", None)
+                final_r1 = results.get("val_final_state_distance_robot1", None)
+                if final_r0 is not None:
+                    metric_values.append(final_r0)
+                    metric_names.append(f"final_dist_r0={final_r0:.6f}")
+                if final_r1 is not None:
+                    metric_values.append(final_r1)
+                    metric_names.append(f"final_dist_r1={final_r1:.6f}")
+                
+                # Fallback: use combined trajectory error if per-arm not available
+                if traj_r0 is None and traj_r1 is None:
+                    traj = results.get("val_eef_trajectory_error", None)
+                    if traj is not None:
+                        metric_values.append(traj)
+                        metric_names.append(f"traj_err={traj:.6f}")
+                    final = results.get("val_final_state_distance", None)
+                    if final is not None:
+                        metric_values.append(final)
+                        metric_names.append(f"final_dist={final:.6f}")
+                
+                if len(metric_values) == 0:
+                    print("  No metrics found!")
+                    score = -1000.0
+                else:
+                    avg_val = np.mean(metric_values)
+                    score = -avg_val
+                    print(f"\n  >> Optimizing: avg of {len(metric_values)} metrics = {avg_val:.6f} (lower is better)")
+                    for name in metric_names:
+                        print(f"       {name}")
+            
             else:
                 raise ValueError(f"Unknown metric: {metric}")
             
@@ -286,6 +355,7 @@ def run_offline_bayesian_optimization(
                 "ucgmts_config": params.get('ucgmts_config', {}),
                 "results": results,
                 "score": score,
+                "actual_metric_value": -score if score > -999 else None,
                 "elapsed_seconds": elapsed,
             }
             all_trial_results.append(trial_result)
@@ -314,9 +384,8 @@ def run_offline_bayesian_optimization(
     print("\n" + "=" * 60)
     print("OPTIMIZATION COMPLETE")
     print("=" * 60)
-    print(f"Best score: {best_score:.6f}")
-    if metric in ("action_l2", "trajectory_error"):
-        print(f"Best {metric}: {-best_score:.6f}")
+    print(f"Best score: {best_score:.6f} (optimizer internal, higher=better)")
+    print(f"Best metric value: {-best_score:.6f} (actual error, lower=better)")
     print(f"Best params:")
     for k, v in best_params.items():
         if k != 'ucgmts_config':
@@ -359,12 +428,12 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", default="bayesian_optimization_results", help="Output directory")
     parser.add_argument("--max_trials", type=int, default=20, help="Max optimization trials")
     parser.add_argument("--device", default="cuda:0", help="Device")
-    parser.add_argument("--optimization_mode", default="balanced", 
+    parser.add_argument("--optimization_mode", default="speed_priority", 
                         choices=["speed_priority", "balanced", "performance_priority"],
-                        help="Optimization mode")
-    parser.add_argument("--metric", default="action_l2",
-                        choices=["action_l2", "trajectory_error", "combined"],
-                        help="Metric to optimize")
+                        help="Optimization mode (default: speed_priority)")
+    parser.add_argument("--metric", default="all_combined",
+                        choices=["action_l2", "trajectory_error", "combined", "all_combined"],
+                        help="Metric to optimize: action_l2, trajectory_error, combined (weighted), all_combined (avg all metrics including per-arm)")
     parser.add_argument("--max_batches", type=int, default=None,
                         help="Max validation batches per trial (None=all, set lower for faster trials)")
     parser.add_argument("--quick_test", action="store_true", help="Quick test: 3 trials")
