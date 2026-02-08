@@ -1,0 +1,9 @@
+{
+  "val_action_l2_distances": 0.021518871188163757,
+  "val_eef_trajectory_error": 0.040323268381757586,
+  "val_eef_trajectory_error_robot0": 0.06315119553932814,
+  "val_eef_trajectory_error_robot1": 0.01749534122418703,
+  "val_final_state_distance": 0.06707397855560833,
+  "val_final_state_distance_robot0": 0.10331809616125212,
+  "val_final_state_distance_robot1": 0.03082986094996454
+}
