@@ -6,7 +6,7 @@ shape_meta:
   image_resolution: 224
   action:
     shape:
-      - 14  # Bimanual: robot0(7) + robot1(7) = 14D
+      - 7  
   obs:
     image:
       shape:
@@ -26,21 +26,9 @@ shape_meta:
       shape:
         - 1
       type: low_dim
-    robot1_eef_pos:
-      shape:
-        - 3
-      type: low_dim
-    robot1_eef_rot_axis_angle:
-      shape:
-        - 3
-      type: low_dim
-    robot1_gripper_width:
-      shape:
-        - 1
-      type: low_dim
 
 dataset:
-  _target_: unified_video_action.dataset.umi_bimanual_dataset.UmiBimanualDataset
+  _target_: unified_video_action.dataset.umi_cup_arrangement_dataset.UmiCupArrangementDataset
   language_emb_model: null
   horizon: 32
   pad_after: 7
