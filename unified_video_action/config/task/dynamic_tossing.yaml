@@ -1,0 +1,55 @@
+name: dynamic_tossing
+task_type: single_dataset
+task_modes: []
+
+shape_meta:
+  image_resolution: 224
+  action:
+    shape:
+      - 14  # Bimanual: robot0(7) + robot1(7) = 14D
+  obs:
+    image:
+      shape:
+        - 3
+        - 224
+        - 224
+      type: rgb
+    robot0_eef_pos:
+      shape:
+        - 3
+      type: low_dim
+    robot0_eef_rot_axis_angle:
+      shape:
+        - 3
+      type: low_dim
+    robot0_gripper_width:
+      shape:
+        - 1
+      type: low_dim
+    robot1_eef_pos:
+      shape:
+        - 3
+      type: low_dim
+    robot1_eef_rot_axis_angle:
+      shape:
+        - 3
+      type: low_dim
+    robot1_gripper_width:
+      shape:
+        - 1
+      type: low_dim
+
+dataset:
+  _target_: unified_video_action.dataset.umi_bimanual_dataset.UmiBimanualDataset
+  language_emb_model: null
+  horizon: 32
+  pad_after: 7
+  pad_before: 1
+  seed: 42
+  val_ratio: 0.02
+  data_aug: true
+  normalizer_type: all
+  dataset_path: data/dynamic_tossing_0.zarr
+  dataset_type: singletask
+
+# No env_runner for real-world dataset - validation will use action L2 error
