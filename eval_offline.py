@@ -47,12 +47,18 @@ from unified_video_action.eval.eval import (
 @click.option("--no_ema", is_flag=True, help="Disable EMA, use raw model")
 @click.option("--fvd", is_flag=True, help="Also compute FVD (slower)")
 @click.option("--use_ucgm", is_flag=True, help="Enable UCGM mode")
+# UCGM parameters (all optimized by Bayesian optimization)
 @click.option("--num_sampling_steps", type=int, default=None, help="Override num_sampling_steps")
 @click.option("--stochasticity_rate", type=float, default=None, help="Override consistc_ratio")
+@click.option("--temperature", type=float, default=None, help="Override temperature")
+@click.option("--cfg_scale", type=float, default=None, help="Override cfg (classifier-free guidance scale)")
 @click.option("--window_size", type=int, default=None, help="Override window_size")
 @click.option("--lambda_local", type=float, default=None, help="Override lambda_local")
+@click.option("--rfba_gap_end", type=float, default=None, help="Override rfba_gap_steps end value")
+@click.option("--extrapol_ratio", type=float, default=None, help="Override extrapol_ratio")
 def main(checkpoint, output_dir, device, no_ema, fvd, use_ucgm,
-         num_sampling_steps, stochasticity_rate, window_size, lambda_local):
+         num_sampling_steps, stochasticity_rate, temperature, cfg_scale,
+         window_size, lambda_local, rfba_gap_end, extrapol_ratio):
     
     os.makedirs(output_dir, exist_ok=True)
     
@@ -79,18 +85,22 @@ def main(checkpoint, output_dir, device, no_ema, fvd, use_ucgm,
         
         if use_ucgm:
             cfg.model.policy.autoregressive_model_params.use_ucgm = True
-        if stochasticity_rate is not None:
-            cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = stochasticity_rate
         if num_sampling_steps is not None:
             cfg.model.policy.autoregressive_model_params.num_sampling_steps = num_sampling_steps
-            if num_sampling_steps <= 2:
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.5]
-            else:
-                cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, 0.001]
+        if temperature is not None:
+            cfg.model.policy.autoregressive_model_params.temperature = temperature
+        if cfg_scale is not None:
+            cfg.model.policy.autoregressive_model_params.cfg = cfg_scale
         if window_size is not None:
             cfg.model.policy.autoregressive_model_params.window_size = window_size
         if lambda_local is not None:
             cfg.model.policy.autoregressive_model_params.lambda_local = lambda_local
+        if stochasticity_rate is not None:
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.consistc_ratio = stochasticity_rate
+        if rfba_gap_end is not None:
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.rfba_gap_steps = [0.001, rfba_gap_end]
+        if extrapol_ratio is not None:
+            cfg.model.policy.autoregressive_model_params.ucgmts_config.extrapol_ratio = extrapol_ratio
     
     # Set seed
     seed = cfg.training.seed
