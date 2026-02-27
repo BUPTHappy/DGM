@@ -2,11 +2,9 @@ hostfile
 debug*/
 checkpoints/
 vis*/
-*.npz
 *.out
 *.mp4
 *.gif
-*.jpg
 debug/
 outputs/
 data/
