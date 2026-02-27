@@ -55,7 +55,13 @@ def _load_policy_and_cfg(
     policy.to(device)
     policy.eval()
 
-    effective_steps = policy.model.diffactloss.gen_diffusion.num_timesteps
+    diffact = policy.model.diffactloss
+    if hasattr(diffact, "num_sampling_steps"):
+        effective_steps = diffact.num_sampling_steps
+    elif hasattr(diffact, "gen_diffusion"):
+        effective_steps = diffact.gen_diffusion.num_timesteps
+    else:
+        effective_steps = "unknown"
     print(
         f"[INFO] Effective action diffusion sampling steps: {effective_steps} "
         f"(requested: {act_diff_testing_steps})"
