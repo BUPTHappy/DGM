@@ -164,28 +164,17 @@ def _collect_z_refine(cfg, policy, loader, device, max_batches):
             proprioception_input,
         ) = prepare_data_predict_action(cfg, batch, actions, policy, T, device, language_goal=language_goal)
 
-        # Reconstruct the latent that feeds the action diffusion head (before diffusion sampling).
-        n_frames = policy.model.n_frames
-        seq_len = policy.model.seq_len
-        mask = torch.ones(bsz, n_frames, seq_len, device=device)
-        tokens = torch.zeros(
-            bsz,
-            n_frames,
-            seq_len,
-            policy.model.token_embed_dim,
-            device=device,
-        )
-        x_enc = policy.model.forward_mae_encoder(
-            tokens,
-            mask,
-            c,
-            text_latents=text_latents,
-            history_nactions=history_trajectory,
-            nactions=trajectory,
-            proprioception_input=proprioception_input,
-            task_mode="policy_model",
-        )
-        z_decoder = policy.model.forward_mae_decoder(x_enc, mask)
+        # `prepare_data_predict_action` in DGM returns decoder-side latent grid as [B, T, H, W, C].
+        # Convert to the action diffusion input layout [B, T*H*W, C].
+        if c.dim() == 5:
+            z_decoder = c.reshape(c.shape[0], c.shape[1] * c.shape[2] * c.shape[3], c.shape[4])
+        elif c.dim() == 4:
+            z_decoder = c.reshape(c.shape[0], c.shape[1] * c.shape[2], c.shape[3])
+        elif c.dim() == 3:
+            z_decoder = c
+        else:
+            raise RuntimeError(f"Unexpected latent shape from prepare_data_predict_action: {tuple(c.shape)}")
+
         z_refine = _get_action_pre_diffusion_latent(policy, z_decoder)
 
         all_vals.append(z_refine.detach().reshape(-1).cpu().numpy())
