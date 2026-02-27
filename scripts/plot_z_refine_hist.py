@@ -164,18 +164,38 @@ def _collect_z_refine(cfg, policy, loader, device, max_batches):
             proprioception_input,
         ) = prepare_data_predict_action(cfg, batch, actions, policy, T, device, language_goal=language_goal)
 
-        # `prepare_data_predict_action` in DGM returns decoder-side latent grid as [B, T, H, W, C].
-        # Convert to the action diffusion input layout [B, T*H*W, C].
-        if c.dim() == 5:
-            z_decoder = c.reshape(c.shape[0], c.shape[1] * c.shape[2] * c.shape[3], c.shape[4])
-        elif c.dim() == 4:
-            z_decoder = c.reshape(c.shape[0], c.shape[1] * c.shape[2], c.shape[3])
-        elif c.dim() == 3:
-            z_decoder = c
-        else:
-            raise RuntimeError(f"Unexpected latent shape from prepare_data_predict_action: {tuple(c.shape)}")
+        diffact = policy.model.diffactloss
+        capture = {}
+        hook = None
+        if diffact.act_model_type == "conv_fc" and hasattr(diffact, "refine"):
+            def _capture_refine_output(_module, _inputs, outputs):
+                capture["z_refine"] = outputs.detach()
+            hook = diffact.refine.register_forward_hook(_capture_refine_output)
 
-        z_refine = _get_action_pre_diffusion_latent(policy, z_decoder)
+        try:
+            _z, _act_out = policy.model.sample_tokens(
+                bsz=bsz,
+                cond=c,
+                text_latents=text_latents,
+                num_iter=cfg.model.policy.autoregressive_model_params.num_iter,
+                cfg=cfg.model.policy.autoregressive_model_params.cfg,
+                cfg_schedule=cfg.model.policy.autoregressive_model_params.cfg_schedule,
+                temperature=cfg.model.policy.autoregressive_model_params.temperature,
+                history_nactions=history_trajectory,
+                nactions=trajectory,
+                proprioception_input=proprioception_input,
+                task_mode="policy_model",
+            )
+        finally:
+            if hook is not None:
+                hook.remove()
+
+        z_refine = capture.get("z_refine")
+        if z_refine is None:
+            raise RuntimeError(
+                "Failed to capture z_refine from DiffActLoss.refine. "
+                "Current script expects act_model_type=conv_fc."
+            )
 
         all_vals.append(z_refine.detach().reshape(-1).cpu().numpy())
 
