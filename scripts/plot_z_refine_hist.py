@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from omegaconf import open_dict
 
-ROOT_DIR = pathlib.Path(__file__).resolve().parents[2]
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
