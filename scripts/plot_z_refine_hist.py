@@ -47,7 +47,9 @@ def _load_policy_and_cfg(
 
     cls = hydra.utils.get_class(cfg.model._target_)
     workspace: BaseWorkspace = cls(cfg, output_dir=output_dir)
-    workspace.load_payload(payload, exclude_keys=None, include_keys=None)
+    # DGM checkpoints from different code revisions may carry extra keys (e.g. ucgmts.mod.*).
+    # Non-strict loading keeps this analysis script robust to those schema drifts.
+    workspace.load_payload(payload, exclude_keys=None, include_keys=None, strict=False)
 
     policy = workspace.ema_model if workspace.ema_model is not None else workspace.model
     policy.to(device)
