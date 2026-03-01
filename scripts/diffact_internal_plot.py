@@ -24,6 +24,473 @@ from unified_video_action.utils.data_utils import resize_image
 from unified_video_action.eval.eval import prepare_data_predict_action
 
 
+def _load_policy_and_cfg(ckpt_path, output_dir, device, act_diff_testing_steps, dataset_path):
+    payload = torch.load(open(ckpt_path, "rb"), map_location="cpu", pickle_module=dill)
+    cfg = payload["cfg"]
+
+    seed = cfg.training.seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+    with open_dict(cfg):
+        cfg.output_dir = output_dir
+        cfg.model.policy.autoregressive_model_params.act_diff_testing_steps = str(
+            act_diff_testing_steps
+        )
+        if dataset_path is not None and hasattr(cfg.task, "dataset"):
+            if "dataset_path" in cfg.task.dataset:
+                cfg.task.dataset.dataset_path = dataset_path
+            if "zarr_path" in cfg.task.dataset:
+                cfg.task.dataset.zarr_path = dataset_path
+
+    cls = hydra.utils.get_class(cfg.model._target_)
+    workspace: BaseWorkspace = cls(cfg, output_dir=output_dir)
+    workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, strict=False)
+
+    policy = workspace.ema_model if workspace.ema_model is not None else workspace.model
+    policy.to(device)
+    policy.eval()
+
+    diffact = policy.model.diffactloss
+    if hasattr(diffact, "num_sampling_steps"):
+        effective_steps = diffact.num_sampling_steps
+    elif hasattr(diffact, "gen_diffusion"):
+        effective_steps = diffact.gen_diffusion.num_timesteps
+    else:
+        effective_steps = "unknown"
+    print(
+        f"[INFO] Effective action diffusion sampling steps: {effective_steps} "
+        f"(requested: {act_diff_testing_steps})"
+    )
+    return cfg, policy
+
+
+def _build_val_loader(cfg):
+    if cfg.task.task_type == "multiple_datasets":
+        dataset = hydra.utils.instantiate(cfg.task.dataset)
+        val_dataset = dataset.split_unused_episodes()
+        return val_dataset.get_dataloader()
+
+    dataset = hydra.utils.instantiate(cfg.task.dataset)
+    val_dataset = dataset.get_validation_dataset()
+    return DataLoader(val_dataset, **cfg.val_dataloader)
+
+
+def _resolve_block_index(block_index, n_blocks):
+    if block_index < 0:
+        block_index = n_blocks + block_index
+    if block_index < 0 or block_index >= n_blocks:
+        raise ValueError(f"block_index={block_index} out of range for n_blocks={n_blocks}")
+    return block_index
+
+
+def _maybe_downsample(values, max_points):
+    if values.shape[0] <= max_points:
+        return values
+    idx = np.random.choice(values.shape[0], size=max_points, replace=False)
+    return values[idx]
+
+
+def _run_policy_sample_tokens(cfg, policy, loader, device, max_batches):
+    for n, batch in enumerate(loader):
+        if n >= max_batches:
+            break
+
+        batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+        actions = batch["action"]
+
+        if cfg.model.policy.use_history_action:
+            batch = dict_apply(batch, lambda x: x[:, 1:])
+
+        batch = resize_image(cfg, batch)
+        bsz, T, _, _, _ = batch["obs"]["image"].size()
+
+        if cfg.task.dataset.language_emb_model is not None:
+            if "language" in batch["obs"]:
+                language_goal = batch["obs"]["language"]
+                del batch["obs"]["language"]
+            elif "language_latents" in batch:
+                language_goal = batch["language_latents"]
+                del batch["language_latents"]
+            else:
+                raise NotImplementedError("Language model enabled but no language input found.")
+        else:
+            language_goal = None
+
+        (
+            _x,
+            _real,
+            _latent_size,
+            c,
+            text_latents,
+            history_trajectory,
+            trajectory,
+            proprioception_input,
+        ) = prepare_data_predict_action(
+            cfg, batch, actions, policy, T, device, language_goal=language_goal
+        )
+
+        policy.model.sample_tokens(
+            bsz=bsz,
+            cond=c,
+            text_latents=text_latents,
+            num_iter=cfg.model.policy.autoregressive_model_params.num_iter,
+            cfg=cfg.model.policy.autoregressive_model_params.cfg,
+            cfg_schedule=cfg.model.policy.autoregressive_model_params.cfg_schedule,
+            temperature=cfg.model.policy.autoregressive_model_params.temperature,
+            history_nactions=history_trajectory,
+            nactions=trajectory,
+            proprioception_input=proprioception_input,
+            task_mode="policy_model",
+        )
+
+
+@torch.no_grad()
+def _collect_ucgm_forward_values(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    target,
+    capture_step,
+    max_points_per_call,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    ucgm = policy.model.diffactloss.ucgmts
+    if target == "model_mean":
+        print("[WARN] UCGM has no DDPM model_mean; using z_hat as proxy.")
+    print(
+        f"[INFO] {target} capture configured at sampling step={capture_step} "
+        "(step index corresponds to solver t index)."
+    )
+
+    collected = []
+    original_unbound = ucgm.__class__.forward
+    call_idx = {"value": 0}
+
+    def wrapped_forward(self, model, x_t=None, t=None, **model_kwargs):
+        x_hat, z_hat, f_t, dent = original_unbound(
+            self, model, x_t=x_t, t=t, **model_kwargs
+        )
+        step_i = call_idx["value"]
+        call_idx["value"] += 1
+
+        if capture_step < 0 or step_i == capture_step:
+            if target == "noisy_xt":
+                values_tensor = x_t
+            elif target == "eps_pred":
+                values_tensor = f_t
+            elif target == "pred_xstart":
+                values_tensor = x_hat
+            elif target == "model_mean":
+                values_tensor = z_hat
+            else:
+                raise ValueError(f"Unsupported UCGM target: {target}")
+
+            values = values_tensor.detach().float().reshape(-1).cpu().numpy()
+            values = _maybe_downsample(values, max_points_per_call)
+            collected.append(values)
+
+        return x_hat, z_hat, f_t, dent
+
+    ucgm.forward = types.MethodType(wrapped_forward, ucgm)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        ucgm.forward = types.MethodType(original_unbound, ucgm)
+
+    if len(collected) == 0:
+        raise RuntimeError(
+            f"No {target} values collected at sampling step={capture_step}. "
+            "Use --capture-step -1 to collect all steps."
+        )
+    return np.concatenate(collected, axis=0)
+
+
+@torch.no_grad()
+def _collect_noisy_xt_values_by_step(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    max_points_per_call,
+):
+    ucgm = policy.model.diffactloss.ucgmts
+    print("[INFO] noisy_xt sweep capture by sampling step.")
+
+    collected = {}
+    original_unbound = ucgm.__class__.forward
+    call_idx = {"value": 0}
+
+    def wrapped_forward(self, model, x_t=None, t=None, **model_kwargs):
+        x_hat, z_hat, f_t, dent = original_unbound(
+            self, model, x_t=x_t, t=t, **model_kwargs
+        )
+        step_i = call_idx["value"]
+        call_idx["value"] += 1
+
+        values = x_t.detach().float().reshape(-1).cpu().numpy()
+        values = _maybe_downsample(values, max_points_per_call)
+        if step_i not in collected:
+            collected[step_i] = []
+        collected[step_i].append(values)
+        return x_hat, z_hat, f_t, dent
+
+    ucgm.forward = types.MethodType(wrapped_forward, ucgm)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        ucgm.forward = types.MethodType(original_unbound, ucgm)
+
+    if len(collected) == 0:
+        raise RuntimeError("No noisy_xt values collected in sweep mode.")
+
+    return {s: np.concatenate(v, axis=0) for s, v in collected.items()}
+
+
+@torch.no_grad()
+def _collect_internal_values(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    target,
+    block_index,
+    max_points_per_call,
+):
+    res_blocks = policy.model.diffactloss.net.res_blocks
+    n_blocks = len(res_blocks)
+    block_index = _resolve_block_index(block_index, n_blocks)
+    target_block = res_blocks[block_index]
+    print(f"[INFO] Collecting from ResBlock index: {block_index} / {n_blocks - 1}")
+
+    collected = []
+
+    def hook_fn(module, inputs, _output):
+        x, y = inputs
+        shift_mlp, scale_mlp, gate_mlp = module.adaLN_modulation(y).chunk(3, dim=-1)
+        h = module.mlp(module.in_ln(x) * (1 + scale_mlp) + shift_mlp)
+        delta = gate_mlp * h
+
+        if target == "gate_mlp":
+            values = gate_mlp.detach().float().reshape(-1).cpu().numpy()
+        elif target == "delta":
+            values = delta.detach().float().reshape(-1).cpu().numpy()
+        else:
+            raise ValueError(f"Unsupported target: {target}")
+
+        values = _maybe_downsample(values, max_points_per_call)
+        collected.append(values)
+
+    handle = target_block.register_forward_hook(hook_fn)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        handle.remove()
+
+    if len(collected) == 0:
+        raise RuntimeError("No internal values collected. Increase --max-batches.")
+    return np.concatenate(collected, axis=0), block_index
+
+
+def _plot_hist(values, label, out_path, target, bins=120):
+    plt.figure(figsize=(8, 5))
+    plt.hist(values, bins=bins, density=True, alpha=0.75, label=label)
+    plt.xlabel(f"{target} value")
+    plt.ylabel("density")
+    plt.title(f"{target} distribution")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=220)
+    plt.close()
+
+
+def _plot_hist_sweep(step_to_values, label, out_path, bins=120, interval=1):
+    all_steps = sorted(step_to_values.keys())
+    selected_steps = sorted(
+        list({s for s in all_steps if (s % interval == 0)} | {all_steps[0], all_steps[-1]})
+    )
+
+    n = len(selected_steps)
+    ncols = 3
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15, 3.8 * nrows))
+    axes = np.array(axes).reshape(-1)
+
+    all_values = np.concatenate([step_to_values[s] for s in selected_steps], axis=0)
+    x_low, x_high = np.quantile(all_values, [0.001, 0.999])
+
+    for i, s in enumerate(selected_steps):
+        ax = axes[i]
+        vals = step_to_values[s]
+        ax.hist(vals, bins=bins, density=True, alpha=0.75)
+        ax.set_xlim(x_low, x_high)
+        ax.set_title(f"step={s}")
+        ax.set_xlabel("noisy_xt value")
+        ax.set_ylabel("density")
+        ax.grid(alpha=0.2)
+
+    for j in range(n, len(axes)):
+        axes[j].axis("off")
+
+    fig.suptitle(f"noisy_xt evolution by step ({label})", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=220)
+    plt.close(fig)
+
+
+def _transform_values(values, value_mode):
+    if value_mode == "raw":
+        return values
+    if value_mode == "abs":
+        return np.abs(values)
+    if value_mode == "square":
+        return values**2
+    raise ValueError(f"Unsupported value_mode: {value_mode}")
+
+
+@click.command()
+@click.option("--checkpoint", default="checkpoints/pusht_dgm.ckpt", type=str, show_default=True)
+@click.option("--label", default="dgm_2step", type=str, show_default=True)
+@click.option("--output-dir", default="out_diagram", type=str, show_default=True)
+@click.option("--device", default="cuda:0", type=str, show_default=True)
+@click.option("--max-batches", default=50, type=int, show_default=True)
+@click.option("--act-steps", default=2, type=int, show_default=True)
+@click.option(
+    "--target",
+    default="gate_mlp",
+    type=click.Choice(["gate_mlp", "delta", "noisy_xt", "noisy_xt_sweep", "eps_pred", "pred_xstart", "model_mean"]),
+    show_default=True,
+)
+@click.option("--block-index", default=-1, type=int, show_default=True)
+@click.option("--bins", default=120, type=int, show_default=True)
+@click.option("--value-mode", default="raw", type=click.Choice(["raw", "abs", "square"]), show_default=True)
+@click.option("--max-points-per-call", default=200000, type=int, show_default=True)
+@click.option("--capture-step", default=1, type=int, show_default=True)
+@click.option("--capture-t", "capture_step", type=int, hidden=True)
+@click.option("--sweep-interval", default=1, type=int, show_default=True)
+@click.option("--dataset-path", default="data/pusht/pusht_cchi_v7_replay.zarr", type=str, show_default=True)
+def main(
+    checkpoint,
+    label,
+    output_dir,
+    device,
+    max_batches,
+    act_steps,
+    target,
+    block_index,
+    bins,
+    value_mode,
+    max_points_per_call,
+    capture_step,
+    sweep_interval,
+    dataset_path,
+):
+    output_dir = os.path.abspath(output_dir)
+    pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    print(f"[INFO] Collecting {target} from checkpoint: {checkpoint}")
+    dataset_path = os.path.abspath(dataset_path)
+    print(f"[INFO] Using dataset path: {dataset_path}")
+
+    cfg, policy = _load_policy_and_cfg(
+        ckpt_path=checkpoint,
+        output_dir=output_dir,
+        device=device,
+        act_diff_testing_steps=act_steps,
+        dataset_path=dataset_path,
+    )
+    loader = _build_val_loader(cfg)
+
+    if target == "noisy_xt":
+        values = _collect_ucgm_forward_values(
+            cfg, policy, loader, device, max_batches, target, capture_step, max_points_per_call
+        )
+        used_block = -1
+        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_{value_mode}.png")
+    elif target == "noisy_xt_sweep":
+        step_to_values = _collect_noisy_xt_values_by_step(
+            cfg, policy, loader, device, max_batches, max_points_per_call
+        )
+        step_to_values = {k: _transform_values(v, value_mode) for k, v in step_to_values.items()}
+        npz_path = os.path.join(output_dir, f"{label}_{target}_{value_mode}.npz")
+        np.savez_compressed(
+            npz_path,
+            steps=np.array(sorted(step_to_values.keys()), dtype=np.int64),
+            **{f"step_{k}": v for k, v in step_to_values.items()},
+            value_mode=value_mode,
+        )
+        print(f"[INFO] Saved values: {npz_path}")
+        fig_path = os.path.join(output_dir, f"{target}_{value_mode}_every{sweep_interval}.png")
+        _plot_hist_sweep(step_to_values, label, fig_path, bins=bins, interval=sweep_interval)
+        print(f"[INFO] Saved histogram sweep: {fig_path}")
+        return
+    elif target in {"eps_pred", "pred_xstart", "model_mean"}:
+        values = _collect_ucgm_forward_values(
+            cfg, policy, loader, device, max_batches, target, capture_step, max_points_per_call
+        )
+        used_block = -1
+        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_{value_mode}.png")
+    else:
+        values, used_block = _collect_internal_values(
+            cfg, policy, loader, device, max_batches, target, block_index, max_points_per_call
+        )
+        npz_path = os.path.join(output_dir, f"{label}_{target}_block{used_block}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_block{used_block}_{value_mode}.png")
+
+    values_out = _transform_values(values, value_mode)
+    np.savez_compressed(
+        npz_path,
+        **{target: values_out},
+        block_index=used_block,
+        capture_step=capture_step,
+        value_mode=value_mode,
+        mean=values_out.mean(),
+        std=values_out.std(),
+    )
+    print(f"[INFO] Saved values: {npz_path}")
+    print(f"[INFO] {label} {target} ({value_mode}): mean={values_out.mean():.6f}, std={values_out.std():.6f}")
+
+    _plot_hist(values_out, label=label, out_path=fig_path, target=f"{target} ({value_mode})", bins=bins)
+    print(f"[INFO] Saved histogram: {fig_path}")
+
+
+if __name__ == "__main__":
+    main()
+import os
+import random
+import pathlib
+import sys
+import types
+
+import click
+import dill
+import hydra
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+
+from torch.utils.data import DataLoader
+from omegaconf import open_dict
+
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from unified_video_action.workspace.base_workspace import BaseWorkspace
+from unified_video_action.common.pytorch_util import dict_apply
+from unified_video_action.utils.data_utils import resize_image
+from unified_video_action.eval.eval import prepare_data_predict_action
+
+
 def _load_policy_and_cfg(
     ckpt_path, output_dir, device, act_diff_testing_steps, dataset_path
 ):
@@ -155,21 +622,19 @@ def _collect_ucgm_forward_values(
     loader,
     device,
     max_batches,
+    target,
     capture_step,
     max_points_per_call,
-    target,
 ):
     if not hasattr(policy.model, "diffactloss"):
         raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
 
     ucgm = policy.model.diffactloss.ucgmts
     if target == "model_mean":
-        print(
-            "[WARN] UCGM has no DDPM model_mean; using z_hat as an internal proxy."
-        )
+        print("[WARN] UCGM has no DDPM model_mean; using z_hat as proxy.")
     print(
-        f"[INFO] {target} capture configured at step={capture_step}; "
-        f"sampling_steps={policy.model.diffactloss.num_sampling_steps}"
+        f"[INFO] {target} capture configured at sampling step={capture_step} "
+        "(step index corresponds to solver t index)."
     )
 
     collected = []
@@ -182,6 +647,7 @@ def _collect_ucgm_forward_values(
         )
         step_i = call_idx["value"]
         call_idx["value"] += 1
+
         if capture_step < 0 or step_i == capture_step:
             if target == "noisy_xt":
                 values_tensor = x_t
@@ -197,6 +663,7 @@ def _collect_ucgm_forward_values(
             values = values_tensor.detach().float().reshape(-1).cpu().numpy()
             values = _maybe_downsample(values, max_points_per_call)
             collected.append(values)
+
         return x_hat, z_hat, f_t, dent
 
     ucgm.forward = types.MethodType(wrapped_forward, ucgm)
@@ -207,10 +674,1187 @@ def _collect_ucgm_forward_values(
 
     if len(collected) == 0:
         raise RuntimeError(
-            f"No {target} values collected at step={capture_step}. "
-            "Use --capture-step -1 to collect all sampling steps."
+            f"No {target} values collected at sampling step={capture_step}. "
+            "Use --capture-step -1 to collect all steps."
         )
     return np.concatenate(collected, axis=0)
+
+
+@torch.no_grad()
+def _collect_noisy_xt_values_by_step(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    max_points_per_call,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    ucgm = policy.model.diffactloss.ucgmts
+    print("[INFO] noisy_xt sweep capture by sampling step.")
+
+    collected = {}
+    original_unbound = ucgm.__class__.forward
+    call_idx = {"value": 0}
+
+    def wrapped_forward(self, model, x_t=None, t=None, **model_kwargs):
+        x_hat, z_hat, f_t, dent = original_unbound(
+            self, model, x_t=x_t, t=t, **model_kwargs
+        )
+        step_i = call_idx["value"]
+        call_idx["value"] += 1
+
+        values = x_t.detach().float().reshape(-1).cpu().numpy()
+        values = _maybe_downsample(values, max_points_per_call)
+        if step_i not in collected:
+            collected[step_i] = []
+        collected[step_i].append(values)
+
+        return x_hat, z_hat, f_t, dent
+
+    ucgm.forward = types.MethodType(wrapped_forward, ucgm)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        ucgm.forward = types.MethodType(original_unbound, ucgm)
+
+    if len(collected) == 0:
+        raise RuntimeError("No noisy_xt values collected in sweep mode.")
+
+    merged = {}
+    for step_i, vals in collected.items():
+        merged[step_i] = np.concatenate(vals, axis=0)
+    return merged
+
+
+@torch.no_grad()
+def _collect_internal_values(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    target,
+    block_index,
+    max_points_per_call,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    res_blocks = policy.model.diffactloss.net.res_blocks
+    n_blocks = len(res_blocks)
+    block_index = _resolve_block_index(block_index, n_blocks)
+    target_block = res_blocks[block_index]
+    print(f"[INFO] Collecting from ResBlock index: {block_index} / {n_blocks - 1}")
+
+    collected = []
+
+    def hook_fn(module, inputs, _output):
+        x, y = inputs
+        shift_mlp, scale_mlp, gate_mlp = module.adaLN_modulation(y).chunk(3, dim=-1)
+        h = module.mlp(module.in_ln(x) * (1 + scale_mlp) + shift_mlp)
+        delta = gate_mlp * h
+
+        if target == "gate_mlp":
+            values = gate_mlp.detach().float().reshape(-1).cpu().numpy()
+        elif target == "delta":
+            values = delta.detach().float().reshape(-1).cpu().numpy()
+        else:
+            raise ValueError(f"Unsupported target: {target}")
+
+        values = _maybe_downsample(values, max_points_per_call)
+        collected.append(values)
+
+    handle = target_block.register_forward_hook(hook_fn)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        handle.remove()
+
+    if len(collected) == 0:
+        raise RuntimeError("No internal values collected. Increase --max-batches.")
+    return np.concatenate(collected, axis=0), block_index
+
+
+def _plot_hist(values, label, out_path, target, bins=120):
+    plt.figure(figsize=(8, 5))
+    plt.hist(values, bins=bins, density=True, alpha=0.75, label=label)
+    plt.xlabel(f"{target} value")
+    plt.ylabel("density")
+    plt.title(f"{target} distribution")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=220)
+    plt.close()
+
+
+def _plot_hist_sweep(step_to_values, label, out_path, bins=120, interval=1):
+    all_steps = sorted(step_to_values.keys())
+    selected_steps = []
+    for s in all_steps:
+        if s % interval == 0:
+            selected_steps.append(s)
+    if all_steps[0] not in selected_steps:
+        selected_steps.insert(0, all_steps[0])
+    if all_steps[-1] not in selected_steps:
+        selected_steps.append(all_steps[-1])
+    selected_steps = sorted(list(dict.fromkeys(selected_steps)))
+
+    n = len(selected_steps)
+    ncols = 3
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15, 3.8 * nrows))
+    axes = np.array(axes).reshape(-1)
+
+    all_values = np.concatenate([step_to_values[s] for s in selected_steps], axis=0)
+    x_low, x_high = np.quantile(all_values, [0.001, 0.999])
+
+    for i, s in enumerate(selected_steps):
+        ax = axes[i]
+        vals = step_to_values[s]
+        ax.hist(vals, bins=bins, density=True, alpha=0.75)
+        ax.set_xlim(x_low, x_high)
+        ax.set_title(f"step={s}")
+        ax.set_xlabel("noisy_xt value")
+        ax.set_ylabel("density")
+        ax.grid(alpha=0.2)
+
+    for j in range(n, len(axes)):
+        axes[j].axis("off")
+
+    fig.suptitle(f"noisy_xt evolution by step ({label})", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=220)
+    plt.close(fig)
+
+
+def _transform_values(values, value_mode):
+    if value_mode == "raw":
+        return values
+    if value_mode == "abs":
+        return np.abs(values)
+    if value_mode == "square":
+        return values**2
+    raise ValueError(f"Unsupported value_mode: {value_mode}")
+
+
+@click.command()
+@click.option(
+    "--checkpoint",
+    default="checkpoints/pusht_dgm.ckpt",
+    type=str,
+    show_default=True,
+    help="Path to checkpoint.",
+)
+@click.option("--label", default="dgm_2step", type=str, show_default=True)
+@click.option(
+    "--output-dir",
+    default="out_diagram",
+    type=str,
+    show_default=True,
+    help="Directory to save npz and png.",
+)
+@click.option("--device", default="cuda:0", type=str, show_default=True)
+@click.option("--max-batches", default=50, type=int, show_default=True)
+@click.option("--act-steps", default=2, type=int, show_default=True)
+@click.option(
+    "--target",
+    default="gate_mlp",
+    type=click.Choice(
+        ["gate_mlp", "delta", "noisy_xt", "noisy_xt_sweep", "eps_pred", "pred_xstart", "model_mean"]
+    ),
+    show_default=True,
+    help="Which internal diffusion variable to collect.",
+)
+@click.option(
+    "--block-index",
+    default=-1,
+    type=int,
+    show_default=True,
+    help="ResBlock index; -1 means last block.",
+)
+@click.option("--bins", default=120, type=int, show_default=True)
+@click.option(
+    "--value-mode",
+    default="raw",
+    type=click.Choice(["raw", "abs", "square"]),
+    show_default=True,
+    help="How to transform collected values before plotting/saving.",
+)
+@click.option(
+    "--max-points-per-call",
+    default=200000,
+    type=int,
+    show_default=True,
+    help="Randomly keep at most this many values for each denoiser forward call.",
+)
+@click.option(
+    "--capture-step",
+    default=1,
+    type=int,
+    show_default=True,
+    help="Capture at this sampling step index. Use -1 to collect all steps.",
+)
+@click.option(
+    "--capture-t",
+    "capture_step",
+    type=int,
+    hidden=True,
+)
+@click.option(
+    "--sweep-interval",
+    default=1,
+    type=int,
+    show_default=True,
+    help="For noisy_xt_sweep: plot one histogram every N sampling steps.",
+)
+@click.option(
+    "--dataset-path",
+    default="data/pusht/pusht_cchi_v7_replay.zarr",
+    type=str,
+    show_default=True,
+    help="Dataset path override for cfg.task.dataset.",
+)
+def main(
+    checkpoint,
+    label,
+    output_dir,
+    device,
+    max_batches,
+    act_steps,
+    target,
+    block_index,
+    bins,
+    value_mode,
+    max_points_per_call,
+    capture_step,
+    sweep_interval,
+    dataset_path,
+):
+    output_dir = os.path.abspath(output_dir)
+    pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    print(f"[INFO] Collecting {target} from checkpoint: {checkpoint}")
+    dataset_path = os.path.abspath(dataset_path)
+    print(f"[INFO] Using dataset path: {dataset_path}")
+
+    cfg, policy = _load_policy_and_cfg(
+        ckpt_path=checkpoint,
+        output_dir=output_dir,
+        device=device,
+        act_diff_testing_steps=act_steps,
+        dataset_path=dataset_path,
+    )
+    loader = _build_val_loader(cfg)
+
+    if target == "noisy_xt":
+        values = _collect_ucgm_forward_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            target=target,
+            capture_step=capture_step,
+            max_points_per_call=max_points_per_call,
+        )
+        used_block = -1
+        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_{value_mode}.png")
+    elif target == "noisy_xt_sweep":
+        step_to_values = _collect_noisy_xt_values_by_step(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            max_points_per_call=max_points_per_call,
+        )
+        step_to_values = {k: _transform_values(v, value_mode) for k, v in step_to_values.items()}
+        npz_path = os.path.join(output_dir, f"{label}_{target}_{value_mode}.npz")
+        np.savez_compressed(
+            npz_path,
+            steps=np.array(sorted(step_to_values.keys()), dtype=np.int64),
+            **{f"step_{k}": v for k, v in step_to_values.items()},
+            value_mode=value_mode,
+        )
+        print(f"[INFO] Saved values: {npz_path}")
+        fig_path = os.path.join(output_dir, f"{target}_{value_mode}_every{sweep_interval}.png")
+        _plot_hist_sweep(
+            step_to_values=step_to_values,
+            label=label,
+            out_path=fig_path,
+            bins=bins,
+            interval=sweep_interval,
+        )
+        print(f"[INFO] Saved histogram sweep: {fig_path}")
+        return
+    elif target in {"eps_pred", "pred_xstart", "model_mean"}:
+        values = _collect_ucgm_forward_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            target=target,
+            capture_step=capture_step,
+            max_points_per_call=max_points_per_call,
+        )
+        used_block = -1
+        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_{value_mode}.png")
+    else:
+        values, used_block = _collect_internal_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            target=target,
+            block_index=block_index,
+            max_points_per_call=max_points_per_call,
+        )
+        npz_path = os.path.join(output_dir, f"{label}_{target}_block{used_block}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_block{used_block}_{value_mode}.png")
+
+    values_out = _transform_values(values, value_mode)
+    np.savez_compressed(
+        npz_path,
+        **{target: values_out},
+        block_index=used_block,
+        capture_step=capture_step,
+        value_mode=value_mode,
+        mean=values_out.mean(),
+        std=values_out.std(),
+    )
+    print(f"[INFO] Saved values: {npz_path}")
+    print(
+        f"[INFO] {label} {target} ({value_mode}): "
+        f"mean={values_out.mean():.6f}, std={values_out.std():.6f}"
+    )
+
+    _plot_hist(
+        values_out,
+        label=label,
+        out_path=fig_path,
+        target=f"{target} ({value_mode})",
+        bins=bins,
+    )
+    print(f"[INFO] Saved histogram: {fig_path}")
+
+
+if __name__ == "__main__":
+    main()
+import os
+import random
+import pathlib
+import sys
+import types
+
+import click
+import dill
+import hydra
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+
+from torch.utils.data import DataLoader
+from omegaconf import open_dict
+
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from unified_video_action.workspace.base_workspace import BaseWorkspace
+from unified_video_action.common.pytorch_util import dict_apply
+from unified_video_action.utils.data_utils import resize_image
+from unified_video_action.eval.eval import prepare_data_predict_action
+
+
+def _load_policy_and_cfg(
+    ckpt_path, output_dir, device, act_diff_testing_steps, dataset_path
+):
+    payload = torch.load(open(ckpt_path, "rb"), map_location="cpu", pickle_module=dill)
+    cfg = payload["cfg"]
+
+    seed = cfg.training.seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+    with open_dict(cfg):
+        cfg.output_dir = output_dir
+        cfg.model.policy.autoregressive_model_params.act_diff_testing_steps = str(
+            act_diff_testing_steps
+        )
+        if dataset_path is not None and hasattr(cfg.task, "dataset"):
+            if "dataset_path" in cfg.task.dataset:
+                cfg.task.dataset.dataset_path = dataset_path
+            if "zarr_path" in cfg.task.dataset:
+                cfg.task.dataset.zarr_path = dataset_path
+
+    cls = hydra.utils.get_class(cfg.model._target_)
+    workspace: BaseWorkspace = cls(cfg, output_dir=output_dir)
+    # DGM checkpoints can have schema drift (e.g. extra ucgmts.mod params).
+    workspace.load_payload_new(payload, exclude_keys=None, include_keys=None, strict=False)
+
+    policy = workspace.ema_model if workspace.ema_model is not None else workspace.model
+    policy.to(device)
+    policy.eval()
+
+    diffact = policy.model.diffactloss
+    if hasattr(diffact, "num_sampling_steps"):
+        effective_steps = diffact.num_sampling_steps
+    elif hasattr(diffact, "gen_diffusion"):
+        effective_steps = diffact.gen_diffusion.num_timesteps
+    else:
+        effective_steps = "unknown"
+    print(
+        f"[INFO] Effective action diffusion sampling steps: {effective_steps} "
+        f"(requested: {act_diff_testing_steps})"
+    )
+    return cfg, policy
+
+
+def _build_val_loader(cfg):
+    if cfg.task.task_type == "multiple_datasets":
+        dataset = hydra.utils.instantiate(cfg.task.dataset)
+        val_dataset = dataset.split_unused_episodes()
+        return val_dataset.get_dataloader()
+
+    dataset = hydra.utils.instantiate(cfg.task.dataset)
+    val_dataset = dataset.get_validation_dataset()
+    return DataLoader(val_dataset, **cfg.val_dataloader)
+
+
+def _resolve_block_index(block_index, n_blocks):
+    if block_index < 0:
+        block_index = n_blocks + block_index
+    if block_index < 0 or block_index >= n_blocks:
+        raise ValueError(f"block_index={block_index} out of range for n_blocks={n_blocks}")
+    return block_index
+
+
+def _maybe_downsample(values, max_points):
+    if values.shape[0] <= max_points:
+        return values
+    idx = np.random.choice(values.shape[0], size=max_points, replace=False)
+    return values[idx]
+
+
+def _run_policy_sample_tokens(cfg, policy, loader, device, max_batches):
+    for n, batch in enumerate(loader):
+        if n >= max_batches:
+            break
+
+        batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+        actions = batch["action"]
+
+        if cfg.model.policy.use_history_action:
+            batch = dict_apply(batch, lambda x: x[:, 1:])
+
+        batch = resize_image(cfg, batch)
+        bsz, T, _, _, _ = batch["obs"]["image"].size()
+
+        if cfg.task.dataset.language_emb_model is not None:
+            if "language" in batch["obs"]:
+                language_goal = batch["obs"]["language"]
+                del batch["obs"]["language"]
+            elif "language_latents" in batch:
+                language_goal = batch["language_latents"]
+                del batch["language_latents"]
+            else:
+                raise NotImplementedError("Language model enabled but no language input found.")
+        else:
+            language_goal = None
+
+        (
+            _x,
+            _real,
+            _latent_size,
+            c,
+            text_latents,
+            history_trajectory,
+            trajectory,
+            proprioception_input,
+        ) = prepare_data_predict_action(
+            cfg, batch, actions, policy, T, device, language_goal=language_goal
+        )
+
+        policy.model.sample_tokens(
+            bsz=bsz,
+            cond=c,
+            text_latents=text_latents,
+            num_iter=cfg.model.policy.autoregressive_model_params.num_iter,
+            cfg=cfg.model.policy.autoregressive_model_params.cfg,
+            cfg_schedule=cfg.model.policy.autoregressive_model_params.cfg_schedule,
+            temperature=cfg.model.policy.autoregressive_model_params.temperature,
+            history_nactions=history_trajectory,
+            nactions=trajectory,
+            proprioception_input=proprioception_input,
+            task_mode="policy_model",
+        )
+
+
+@torch.no_grad()
+def _collect_ucgm_forward_values(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    target,
+    capture_step,
+    max_points_per_call,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    ucgm = policy.model.diffactloss.ucgmts
+    if target == "model_mean":
+        print("[WARN] UCGM has no DDPM model_mean; using z_hat as proxy.")
+    print(
+        f"[INFO] {target} capture configured at sampling step={capture_step} "
+        "(step index corresponds to solver time index)."
+    )
+
+    collected = []
+    original_unbound = ucgm.__class__.forward
+    call_idx = {"value": 0}
+
+    def wrapped_forward(self, model, x_t=None, t=None, **model_kwargs):
+        x_hat, z_hat, f_t, dent = original_unbound(
+            self, model, x_t=x_t, t=t, **model_kwargs
+        )
+        step_i = call_idx["value"]
+        call_idx["value"] += 1
+
+        if capture_step < 0 or step_i == capture_step:
+            if target == "noisy_xt":
+                values_tensor = x_t
+            elif target == "eps_pred":
+                values_tensor = f_t
+            elif target == "pred_xstart":
+                values_tensor = x_hat
+            elif target == "model_mean":
+                values_tensor = z_hat
+            else:
+                raise ValueError(f"Unsupported UCGM target: {target}")
+
+            values = values_tensor.detach().float().reshape(-1).cpu().numpy()
+            values = _maybe_downsample(values, max_points_per_call)
+            collected.append(values)
+
+        return x_hat, z_hat, f_t, dent
+
+    ucgm.forward = types.MethodType(wrapped_forward, ucgm)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        ucgm.forward = types.MethodType(original_unbound, ucgm)
+
+    if len(collected) == 0:
+        raise RuntimeError(
+            f"No {target} values collected at sampling step={capture_step}. "
+            "Use --capture-step -1 to collect all steps."
+        )
+    return np.concatenate(collected, axis=0)
+
+
+@torch.no_grad()
+def _collect_noisy_xt_values_by_step(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    max_points_per_call,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    ucgm = policy.model.diffactloss.ucgmts
+    print("[INFO] noisy_xt sweep capture by sampling step.")
+
+    collected = {}
+    original_unbound = ucgm.__class__.forward
+    call_idx = {"value": 0}
+
+    def wrapped_forward(self, model, x_t=None, t=None, **model_kwargs):
+        x_hat, z_hat, f_t, dent = original_unbound(
+            self, model, x_t=x_t, t=t, **model_kwargs
+        )
+        step_i = call_idx["value"]
+        call_idx["value"] += 1
+
+        values = x_t.detach().float().reshape(-1).cpu().numpy()
+        values = _maybe_downsample(values, max_points_per_call)
+        if step_i not in collected:
+            collected[step_i] = []
+        collected[step_i].append(values)
+        return x_hat, z_hat, f_t, dent
+
+    ucgm.forward = types.MethodType(wrapped_forward, ucgm)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        ucgm.forward = types.MethodType(original_unbound, ucgm)
+
+    if len(collected) == 0:
+        raise RuntimeError("No noisy_xt values collected in sweep mode.")
+
+    merged = {}
+    for step_i, vals in collected.items():
+        merged[step_i] = np.concatenate(vals, axis=0)
+    return merged
+
+
+@torch.no_grad()
+def _collect_internal_values(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    target,
+    block_index,
+    max_points_per_call,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    res_blocks = policy.model.diffactloss.net.res_blocks
+    n_blocks = len(res_blocks)
+    block_index = _resolve_block_index(block_index, n_blocks)
+    target_block = res_blocks[block_index]
+    print(f"[INFO] Collecting from ResBlock index: {block_index} / {n_blocks - 1}")
+
+    collected = []
+
+    def hook_fn(module, inputs, _output):
+        x, y = inputs
+        shift_mlp, scale_mlp, gate_mlp = module.adaLN_modulation(y).chunk(3, dim=-1)
+        h = module.mlp(module.in_ln(x) * (1 + scale_mlp) + shift_mlp)
+        delta = gate_mlp * h
+
+        if target == "gate_mlp":
+            values = gate_mlp.detach().float().reshape(-1).cpu().numpy()
+        elif target == "delta":
+            values = delta.detach().float().reshape(-1).cpu().numpy()
+        else:
+            raise ValueError(f"Unsupported target: {target}")
+
+        values = _maybe_downsample(values, max_points_per_call)
+        collected.append(values)
+
+    handle = target_block.register_forward_hook(hook_fn)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        handle.remove()
+
+    if len(collected) == 0:
+        raise RuntimeError("No internal values collected. Increase --max-batches.")
+    return np.concatenate(collected, axis=0), block_index
+
+
+def _plot_hist(values, label, out_path, target, bins=120):
+    plt.figure(figsize=(8, 5))
+    plt.hist(values, bins=bins, density=True, alpha=0.75, label=label)
+    plt.xlabel(f"{target} value")
+    plt.ylabel("density")
+    plt.title(f"{target} distribution")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(out_path, dpi=220)
+    plt.close()
+
+
+def _plot_hist_sweep(step_to_values, label, out_path, bins=120, interval=1):
+    all_steps = sorted(step_to_values.keys())
+    selected_steps = []
+    for s in all_steps:
+        if s % interval == 0:
+            selected_steps.append(s)
+    if all_steps[0] not in selected_steps:
+        selected_steps.insert(0, all_steps[0])
+    if all_steps[-1] not in selected_steps:
+        selected_steps.append(all_steps[-1])
+    selected_steps = sorted(list(dict.fromkeys(selected_steps)))
+
+    n = len(selected_steps)
+    ncols = 3
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15, 3.8 * nrows))
+    axes = np.array(axes).reshape(-1)
+
+    all_values = np.concatenate([step_to_values[s] for s in selected_steps], axis=0)
+    x_low, x_high = np.quantile(all_values, [0.001, 0.999])
+
+    for i, s in enumerate(selected_steps):
+        ax = axes[i]
+        vals = step_to_values[s]
+        ax.hist(vals, bins=bins, density=True, alpha=0.75)
+        ax.set_xlim(x_low, x_high)
+        ax.set_title(f"step={s}")
+        ax.set_xlabel("noisy_xt value")
+        ax.set_ylabel("density")
+        ax.grid(alpha=0.2)
+
+    for j in range(n, len(axes)):
+        axes[j].axis("off")
+
+    fig.suptitle(f"noisy_xt evolution by step ({label})", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=220)
+    plt.close(fig)
+
+
+def _transform_values(values, value_mode):
+    if value_mode == "raw":
+        return values
+    if value_mode == "abs":
+        return np.abs(values)
+    if value_mode == "square":
+        return values**2
+    raise ValueError(f"Unsupported value_mode: {value_mode}")
+
+
+@click.command()
+@click.option(
+    "--checkpoint",
+    default="checkpoints/pusht_dgm.ckpt",
+    type=str,
+    show_default=True,
+    help="Path to checkpoint.",
+)
+@click.option("--label", default="dgm_2step", type=str, show_default=True)
+@click.option(
+    "--output-dir",
+    default="out_diagram",
+    type=str,
+    show_default=True,
+    help="Directory to save npz and png.",
+)
+@click.option("--device", default="cuda:0", type=str, show_default=True)
+@click.option("--max-batches", default=50, type=int, show_default=True)
+@click.option("--act-steps", default=2, type=int, show_default=True)
+@click.option(
+    "--target",
+    default="gate_mlp",
+    type=click.Choice(
+        ["gate_mlp", "delta", "noisy_xt", "noisy_xt_sweep", "eps_pred", "pred_xstart", "model_mean"]
+    ),
+    show_default=True,
+    help="Which internal diffusion variable to collect.",
+)
+@click.option(
+    "--block-index",
+    default=-1,
+    type=int,
+    show_default=True,
+    help="ResBlock index; -1 means last block.",
+)
+@click.option("--bins", default=120, type=int, show_default=True)
+@click.option(
+    "--value-mode",
+    default="raw",
+    type=click.Choice(["raw", "abs", "square"]),
+    show_default=True,
+    help="How to transform collected values before plotting/saving.",
+)
+@click.option(
+    "--max-points-per-call",
+    default=200000,
+    type=int,
+    show_default=True,
+    help="Randomly keep at most this many values for each denoiser forward call.",
+)
+@click.option(
+    "--capture-step",
+    default=1,
+    type=int,
+    show_default=True,
+    help="Capture at this sampling step index. Use -1 to collect all steps.",
+)
+@click.option(
+    "--capture-t",
+    "capture_step",
+    type=int,
+    hidden=True,
+)
+@click.option(
+    "--sweep-interval",
+    default=1,
+    type=int,
+    show_default=True,
+    help="For noisy_xt_sweep: plot one histogram every N sampling steps.",
+)
+@click.option(
+    "--dataset-path",
+    default="data/pusht/pusht_cchi_v7_replay.zarr",
+    type=str,
+    show_default=True,
+    help="Dataset path override for cfg.task.dataset.",
+)
+def main(
+    checkpoint,
+    label,
+    output_dir,
+    device,
+    max_batches,
+    act_steps,
+    target,
+    block_index,
+    bins,
+    value_mode,
+    max_points_per_call,
+    capture_step,
+    sweep_interval,
+    dataset_path,
+):
+    output_dir = os.path.abspath(output_dir)
+    pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    print(f"[INFO] Collecting {target} from checkpoint: {checkpoint}")
+    dataset_path = os.path.abspath(dataset_path)
+    print(f"[INFO] Using dataset path: {dataset_path}")
+
+    cfg, policy = _load_policy_and_cfg(
+        ckpt_path=checkpoint,
+        output_dir=output_dir,
+        device=device,
+        act_diff_testing_steps=act_steps,
+        dataset_path=dataset_path,
+    )
+    loader = _build_val_loader(cfg)
+
+    if target == "noisy_xt":
+        values = _collect_ucgm_forward_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            target=target,
+            capture_step=capture_step,
+            max_points_per_call=max_points_per_call,
+        )
+        used_block = -1
+        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_{value_mode}.png")
+    elif target == "noisy_xt_sweep":
+        step_to_values = _collect_noisy_xt_values_by_step(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            max_points_per_call=max_points_per_call,
+        )
+        step_to_values = {k: _transform_values(v, value_mode) for k, v in step_to_values.items()}
+        npz_path = os.path.join(output_dir, f"{label}_{target}_{value_mode}.npz")
+        np.savez_compressed(
+            npz_path,
+            steps=np.array(sorted(step_to_values.keys()), dtype=np.int64),
+            **{f"step_{k}": v for k, v in step_to_values.items()},
+            value_mode=value_mode,
+        )
+        print(f"[INFO] Saved values: {npz_path}")
+        fig_path = os.path.join(output_dir, f"{target}_{value_mode}_every{sweep_interval}.png")
+        _plot_hist_sweep(
+            step_to_values=step_to_values,
+            label=label,
+            out_path=fig_path,
+            bins=bins,
+            interval=sweep_interval,
+        )
+        print(f"[INFO] Saved histogram sweep: {fig_path}")
+        return
+    elif target in {"eps_pred", "pred_xstart", "model_mean"}:
+        values = _collect_ucgm_forward_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            target=target,
+            capture_step=capture_step,
+            max_points_per_call=max_points_per_call,
+        )
+        used_block = -1
+        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_{value_mode}.png")
+    else:
+        values, used_block = _collect_internal_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            target=target,
+            block_index=block_index,
+            max_points_per_call=max_points_per_call,
+        )
+        npz_path = os.path.join(output_dir, f"{label}_{target}_block{used_block}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_block{used_block}_{value_mode}.png")
+
+    values_out = _transform_values(values, value_mode)
+    np.savez_compressed(
+        npz_path,
+        **{target: values_out},
+        block_index=used_block,
+        capture_step=capture_step,
+        value_mode=value_mode,
+        mean=values_out.mean(),
+        std=values_out.std(),
+    )
+    print(f"[INFO] Saved values: {npz_path}")
+    print(
+        f"[INFO] {label} {target} ({value_mode}): "
+        f"mean={values_out.mean():.6f}, std={values_out.std():.6f}"
+    )
+
+    _plot_hist(
+        values_out,
+        label=label,
+        out_path=fig_path,
+        target=f"{target} ({value_mode})",
+        bins=bins,
+    )
+    print(f"[INFO] Saved histogram: {fig_path}")
+
+
+if __name__ == "__main__":
+    main()
+import os
+import random
+import pathlib
+import sys
+import types
+
+import click
+import dill
+import hydra
+import numpy as np
+import torch
+import matplotlib.pyplot as plt
+
+from torch.utils.data import DataLoader
+from omegaconf import open_dict
+
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[2]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from unified_video_action.workspace.base_workspace import BaseWorkspace
+from unified_video_action.common.pytorch_util import dict_apply
+from unified_video_action.utils.data_utils import resize_image
+from unified_video_action.eval.eval import prepare_data_predict_action
+
+
+def _load_policy_and_cfg(
+    ckpt_path, output_dir, device, act_diff_testing_steps, dataset_path
+):
+    payload = torch.load(open(ckpt_path, "rb"), map_location="cpu", pickle_module=dill)
+    cfg = payload["cfg"]
+
+    seed = cfg.training.seed
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+
+    with open_dict(cfg):
+        cfg.output_dir = output_dir
+        cfg.model.policy.autoregressive_model_params.act_diff_testing_steps = str(
+            act_diff_testing_steps
+        )
+        if dataset_path is not None and hasattr(cfg.task, "dataset"):
+            if "dataset_path" in cfg.task.dataset:
+                cfg.task.dataset.dataset_path = dataset_path
+            if "zarr_path" in cfg.task.dataset:
+                cfg.task.dataset.zarr_path = dataset_path
+
+    cls = hydra.utils.get_class(cfg.model._target_)
+    workspace: BaseWorkspace = cls(cfg, output_dir=output_dir)
+    workspace.load_payload(payload, exclude_keys=None, include_keys=None)
+
+    policy = workspace.ema_model if workspace.ema_model is not None else workspace.model
+    policy.to(device)
+    policy.eval()
+
+    effective_steps = policy.model.diffactloss.gen_diffusion.num_timesteps
+    print(
+        f"[INFO] Effective action diffusion sampling steps: {effective_steps} "
+        f"(requested: {act_diff_testing_steps})"
+    )
+    return cfg, policy
+
+
+def _build_val_loader(cfg):
+    if cfg.task.task_type == "multiple_datasets":
+        dataset = hydra.utils.instantiate(cfg.task.dataset)
+        val_dataset = dataset.split_unused_episodes()
+        return val_dataset.get_dataloader()
+
+    dataset = hydra.utils.instantiate(cfg.task.dataset)
+    val_dataset = dataset.get_validation_dataset()
+    return DataLoader(val_dataset, **cfg.val_dataloader)
+
+
+def _resolve_block_index(block_index, n_blocks):
+    if block_index < 0:
+        block_index = n_blocks + block_index
+    if block_index < 0 or block_index >= n_blocks:
+        raise ValueError(f"block_index={block_index} out of range for n_blocks={n_blocks}")
+    return block_index
+
+
+def _maybe_downsample(values, max_points):
+    if values.shape[0] <= max_points:
+        return values
+    idx = np.random.choice(values.shape[0], size=max_points, replace=False)
+    return values[idx]
+
+
+def _run_policy_sample_tokens(cfg, policy, loader, device, max_batches):
+    for n, batch in enumerate(loader):
+        if n >= max_batches:
+            break
+
+        batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+        actions = batch["action"]
+
+        if cfg.model.policy.use_history_action:
+            batch = dict_apply(batch, lambda x: x[:, 1:])
+
+        batch = resize_image(cfg, batch)
+        bsz, T, _, _, _ = batch["obs"]["image"].size()
+
+        if cfg.task.dataset.language_emb_model is not None:
+            if "language" in batch["obs"]:
+                language_goal = batch["obs"]["language"]
+                del batch["obs"]["language"]
+            elif "language_latents" in batch:
+                language_goal = batch["language_latents"]
+                del batch["language_latents"]
+            else:
+                raise NotImplementedError("Language model enabled but no language input found.")
+        else:
+            language_goal = None
+
+        (
+            _x,
+            _real,
+            _latent_size,
+            c,
+            text_latents,
+            history_trajectory,
+            trajectory,
+            proprioception_input,
+        ) = prepare_data_predict_action(
+            cfg, batch, actions, policy, T, device, language_goal=language_goal
+        )
+
+        policy.model.sample_tokens(
+            bsz=bsz,
+            cond=c,
+            text_latents=text_latents,
+            num_iter=cfg.model.policy.autoregressive_model_params.num_iter,
+            cfg=cfg.model.policy.autoregressive_model_params.cfg,
+            cfg_schedule=cfg.model.policy.autoregressive_model_params.cfg_schedule,
+            temperature=cfg.model.policy.autoregressive_model_params.temperature,
+            history_nactions=history_trajectory,
+            nactions=trajectory,
+            proprioception_input=proprioception_input,
+            task_mode="policy_model",
+        )
+
+
+@torch.no_grad()
+def _collect_noisy_xt_values(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    capture_t,
+    max_points_per_call,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    diffusion = policy.model.diffactloss.gen_diffusion
+    print(
+        f"[INFO] noisy_xt capture configured at t={capture_t}; diffusion num_timesteps={diffusion.num_timesteps}"
+    )
+
+    collected = []
+    original_unbound = diffusion.__class__.p_sample
+
+    def wrapped_p_sample(self, model, x, t, *args, **kwargs):
+        t_val = int(t[0].item())
+        if capture_t < 0 or t_val == capture_t:
+            values = x.detach().float().reshape(-1).cpu().numpy()
+            values = _maybe_downsample(values, max_points_per_call)
+            collected.append(values)
+        return original_unbound(self, model, x, t, *args, **kwargs)
+
+    diffusion.p_sample = types.MethodType(wrapped_p_sample, diffusion)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        diffusion.p_sample = types.MethodType(original_unbound, diffusion)
+
+    if len(collected) == 0:
+        raise RuntimeError(
+            f"No noisy_xt values collected at t={capture_t}. Use --capture-t -1 to collect all timesteps."
+        )
+    return np.concatenate(collected, axis=0)
+
+
+@torch.no_grad()
+def _collect_noisy_xt_values_by_t(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    max_points_per_call,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    diffusion = policy.model.diffactloss.gen_diffusion
+    print(f"[INFO] noisy_xt sweep capture; diffusion num_timesteps={diffusion.num_timesteps}")
+
+    collected = {}
+    original_unbound = diffusion.__class__.p_sample
+
+    def wrapped_p_sample(self, model, x, t, *args, **kwargs):
+        t_val = int(t[0].item())
+        values = x.detach().float().reshape(-1).cpu().numpy()
+        values = _maybe_downsample(values, max_points_per_call)
+        if t_val not in collected:
+            collected[t_val] = []
+        collected[t_val].append(values)
+        return original_unbound(self, model, x, t, *args, **kwargs)
+
+    diffusion.p_sample = types.MethodType(wrapped_p_sample, diffusion)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        diffusion.p_sample = types.MethodType(original_unbound, diffusion)
+
+    if len(collected) == 0:
+        raise RuntimeError("No noisy_xt values collected in sweep mode.")
+
+    merged = {}
+    for t_val, vals in collected.items():
+        merged[t_val] = np.concatenate(vals, axis=0)
+    return merged
 
 
 @torch.no_grad()
@@ -221,19 +1865,61 @@ def _collect_diffusion_outputs_values(
     device,
     max_batches,
     target,
-    capture_step,
+    capture_t,
     max_points_per_call,
 ):
-    return _collect_ucgm_forward_values(
-        cfg=cfg,
-        policy=policy,
-        loader=loader,
-        device=device,
-        max_batches=max_batches,
-        capture_step=capture_step,
-        max_points_per_call=max_points_per_call,
-        target=target,
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    diffusion = policy.model.diffactloss.gen_diffusion
+    print(
+        f"[INFO] {target} capture configured at t={capture_t}; diffusion num_timesteps={diffusion.num_timesteps}"
     )
+
+    collected = []
+    original_unbound = diffusion.__class__.p_mean_variance
+
+    def wrapped_p_mean_variance(
+        self, model, x, t, clip_denoised=True, denoised_fn=None, model_kwargs=None
+    ):
+        out = original_unbound(
+            self,
+            model,
+            x,
+            t,
+            clip_denoised=clip_denoised,
+            denoised_fn=denoised_fn,
+            model_kwargs=model_kwargs,
+        )
+
+        t_val = int(t[0].item())
+        if capture_t < 0 or t_val == capture_t:
+            if target == "pred_xstart":
+                values_tensor = out["pred_xstart"]
+            elif target == "model_mean":
+                values_tensor = out["mean"]
+            elif target == "eps_pred":
+                values_tensor = self._predict_eps_from_xstart(x, t, out["pred_xstart"])
+            else:
+                raise ValueError(f"Unsupported diffusion output target: {target}")
+
+            values = values_tensor.detach().float().reshape(-1).cpu().numpy()
+            values = _maybe_downsample(values, max_points_per_call)
+            collected.append(values)
+
+        return out
+
+    diffusion.p_mean_variance = types.MethodType(wrapped_p_mean_variance, diffusion)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        diffusion.p_mean_variance = types.MethodType(original_unbound, diffusion)
+
+    if len(collected) == 0:
+        raise RuntimeError(
+            f"No {target} values collected at t={capture_t}. Use --capture-t -1 to collect all timesteps."
+        )
+    return np.concatenate(collected, axis=0)
 
 
 @torch.no_grad()
@@ -298,6 +1984,47 @@ def _plot_hist(values, label, out_path, target, bins=120):
     plt.close()
 
 
+def _plot_hist_sweep(t_to_values, label, out_path, bins=120, interval=10):
+    all_t = sorted(t_to_values.keys())
+    selected_t = []
+    for t in all_t:
+        if t % interval == 0:
+            selected_t.append(t)
+    if all_t[0] not in selected_t:
+        selected_t.insert(0, all_t[0])
+    if all_t[-1] not in selected_t:
+        selected_t.append(all_t[-1])
+    selected_t = sorted(list(dict.fromkeys(selected_t)), reverse=True)
+
+    n = len(selected_t)
+    ncols = 3
+    nrows = (n + ncols - 1) // ncols
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(15, 3.8 * nrows))
+    axes = np.array(axes).reshape(-1)
+
+    # shared x-range for fair visual comparison
+    all_values = np.concatenate([t_to_values[t] for t in selected_t], axis=0)
+    x_low, x_high = np.quantile(all_values, [0.001, 0.999])
+
+    for i, t in enumerate(selected_t):
+        ax = axes[i]
+        vals = t_to_values[t]
+        ax.hist(vals, bins=bins, density=True, alpha=0.75)
+        ax.set_xlim(x_low, x_high)
+        ax.set_title(f"t={t}")
+        ax.set_xlabel("noisy_xt value")
+        ax.set_ylabel("density")
+        ax.grid(alpha=0.2)
+
+    for j in range(n, len(axes)):
+        axes[j].axis("off")
+
+    fig.suptitle(f"noisy_xt evolution ({label})", fontsize=14)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=220)
+    plt.close(fig)
+
+
 def _transform_values(values, value_mode):
     if value_mode == "raw":
         return values
@@ -311,7 +2038,7 @@ def _transform_values(values, value_mode):
 @click.command()
 @click.option(
     "--checkpoint",
-    default="checkpoints/pusht_dgm.ckpt",
+    default="checkpoints/pusht.ckpt",
     type=str,
     show_default=True,
     help="Path to checkpoint.",
@@ -331,7 +2058,15 @@ def _transform_values(values, value_mode):
     "--target",
     default="gate_mlp",
     type=click.Choice(
-        ["gate_mlp", "delta", "noisy_xt", "eps_pred", "pred_xstart", "model_mean"]
+        [
+            "gate_mlp",
+            "delta",
+            "noisy_xt",
+            "noisy_xt_sweep",
+            "eps_pred",
+            "pred_xstart",
+            "model_mean",
+        ]
     ),
     show_default=True,
     help="Which internal diffusion variable to collect.",
@@ -359,18 +2094,18 @@ def _transform_values(values, value_mode):
     help="Randomly keep at most this many values for each denoiser forward call.",
 )
 @click.option(
-    "--capture-step",
-    "capture_step",
+    "--capture-t",
     default=1,
     type=int,
     show_default=True,
-    help="For sampling-step targets (noisy_xt/eps_pred/pred_xstart/model_mean), capture values at this step index. Use -1 to collect all steps.",
+    help="For diffusion-step targets (noisy_xt/eps_pred/pred_xstart/model_mean), capture values at this timestep. Use -1 to collect all timesteps.",
 )
 @click.option(
-    "--capture-t",
-    "capture_step",
+    "--sweep-interval",
+    default=10,
     type=int,
-    hidden=True,
+    show_default=True,
+    help="For noisy_xt_sweep: plot one histogram every N timesteps.",
 )
 @click.option(
     "--dataset-path",
@@ -391,7 +2126,8 @@ def main(
     bins,
     value_mode,
     max_points_per_call,
-    capture_step,
+    capture_t,
+    sweep_interval,
     dataset_path,
 ):
     output_dir = os.path.abspath(output_dir)
@@ -410,19 +2146,48 @@ def main(
     )
     loader = _build_val_loader(cfg)
     if target == "noisy_xt":
-        values = _collect_ucgm_forward_values(
+        values = _collect_noisy_xt_values(
             cfg=cfg,
             policy=policy,
             loader=loader,
             device=device,
             max_batches=max_batches,
-            capture_step=capture_step,
+            capture_t=capture_t,
             max_points_per_call=max_points_per_call,
-            target=target,
         )
         used_block = -1
-        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
-        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_hist.png")
+        npz_path = os.path.join(output_dir, f"{label}_{target}_t{capture_t}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_t{capture_t}_hist.png")
+    elif target == "noisy_xt_sweep":
+        t_to_values = _collect_noisy_xt_values_by_t(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            max_points_per_call=max_points_per_call,
+        )
+        used_block = -1
+        # apply value transform per timestep
+        t_to_values = {k: _transform_values(v, value_mode) for k, v in t_to_values.items()}
+        npz_path = os.path.join(output_dir, f"{label}_{target}_{value_mode}.npz")
+        np.savez_compressed(
+            npz_path,
+            timesteps=np.array(sorted(t_to_values.keys()), dtype=np.int64),
+            **{f"t_{k}": v for k, v in t_to_values.items()},
+            value_mode=value_mode,
+        )
+        print(f"[INFO] Saved values: {npz_path}")
+        fig_path = os.path.join(output_dir, f"{target}_{value_mode}_every{sweep_interval}.png")
+        _plot_hist_sweep(
+            t_to_values=t_to_values,
+            label=label,
+            out_path=fig_path,
+            bins=bins,
+            interval=sweep_interval,
+        )
+        print(f"[INFO] Saved histogram sweep: {fig_path}")
+        return
     elif target in {"eps_pred", "pred_xstart", "model_mean"}:
         values = _collect_diffusion_outputs_values(
             cfg=cfg,
@@ -431,12 +2196,12 @@ def main(
             device=device,
             max_batches=max_batches,
             target=target,
-            capture_step=capture_step,
+            capture_t=capture_t,
             max_points_per_call=max_points_per_call,
         )
         used_block = -1
-        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
-        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_hist.png")
+        npz_path = os.path.join(output_dir, f"{label}_{target}_t{capture_t}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_t{capture_t}_hist.png")
     else:
         values, used_block = _collect_internal_values(
             cfg=cfg,
@@ -457,7 +2222,7 @@ def main(
         npz_path,
         **{target: values_out},
         block_index=used_block,
-        capture_step=capture_step,
+        capture_t=capture_t,
         value_mode=value_mode,
         mean=values_out.mean(),
         std=values_out.std(),
