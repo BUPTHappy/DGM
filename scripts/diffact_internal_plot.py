@@ -155,7 +155,7 @@ def _collect_ucgm_forward_values(
     loader,
     device,
     max_batches,
-    capture_t,
+    capture_step,
     max_points_per_call,
     target,
 ):
@@ -168,7 +168,7 @@ def _collect_ucgm_forward_values(
             "[WARN] UCGM has no DDPM model_mean; using z_hat as an internal proxy."
         )
     print(
-        f"[INFO] {target} capture configured at step={capture_t}; "
+        f"[INFO] {target} capture configured at step={capture_step}; "
         f"sampling_steps={policy.model.diffactloss.num_sampling_steps}"
     )
 
@@ -182,7 +182,7 @@ def _collect_ucgm_forward_values(
         )
         step_i = call_idx["value"]
         call_idx["value"] += 1
-        if capture_t < 0 or step_i == capture_t:
+        if capture_step < 0 or step_i == capture_step:
             if target == "noisy_xt":
                 values_tensor = x_t
             elif target == "eps_pred":
@@ -207,8 +207,8 @@ def _collect_ucgm_forward_values(
 
     if len(collected) == 0:
         raise RuntimeError(
-            f"No {target} values collected at step={capture_t}. "
-            "Use --capture-t -1 to collect all sampling steps."
+            f"No {target} values collected at step={capture_step}. "
+            "Use --capture-step -1 to collect all sampling steps."
         )
     return np.concatenate(collected, axis=0)
 
@@ -221,7 +221,7 @@ def _collect_diffusion_outputs_values(
     device,
     max_batches,
     target,
-    capture_t,
+    capture_step,
     max_points_per_call,
 ):
     return _collect_ucgm_forward_values(
@@ -230,7 +230,7 @@ def _collect_diffusion_outputs_values(
         loader=loader,
         device=device,
         max_batches=max_batches,
-        capture_t=capture_t,
+        capture_step=capture_step,
         max_points_per_call=max_points_per_call,
         target=target,
     )
@@ -359,11 +359,18 @@ def _transform_values(values, value_mode):
     help="Randomly keep at most this many values for each denoiser forward call.",
 )
 @click.option(
-    "--capture-t",
+    "--capture-step",
+    "capture_step",
     default=1,
     type=int,
     show_default=True,
     help="For sampling-step targets (noisy_xt/eps_pred/pred_xstart/model_mean), capture values at this step index. Use -1 to collect all steps.",
+)
+@click.option(
+    "--capture-t",
+    "capture_step",
+    type=int,
+    hidden=True,
 )
 @click.option(
     "--dataset-path",
@@ -384,7 +391,7 @@ def main(
     bins,
     value_mode,
     max_points_per_call,
-    capture_t,
+    capture_step,
     dataset_path,
 ):
     output_dir = os.path.abspath(output_dir)
@@ -409,13 +416,13 @@ def main(
             loader=loader,
             device=device,
             max_batches=max_batches,
-            capture_t=capture_t,
+            capture_step=capture_step,
             max_points_per_call=max_points_per_call,
             target=target,
         )
         used_block = -1
-        npz_path = os.path.join(output_dir, f"{label}_{target}_t{capture_t}.npz")
-        fig_path = os.path.join(output_dir, f"{target}_t{capture_t}_hist.png")
+        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_hist.png")
     elif target in {"eps_pred", "pred_xstart", "model_mean"}:
         values = _collect_diffusion_outputs_values(
             cfg=cfg,
@@ -424,12 +431,12 @@ def main(
             device=device,
             max_batches=max_batches,
             target=target,
-            capture_t=capture_t,
+            capture_step=capture_step,
             max_points_per_call=max_points_per_call,
         )
         used_block = -1
-        npz_path = os.path.join(output_dir, f"{label}_{target}_t{capture_t}.npz")
-        fig_path = os.path.join(output_dir, f"{target}_t{capture_t}_hist.png")
+        npz_path = os.path.join(output_dir, f"{label}_{target}_step{capture_step}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_step{capture_step}_hist.png")
     else:
         values, used_block = _collect_internal_values(
             cfg=cfg,
@@ -450,7 +457,7 @@ def main(
         npz_path,
         **{target: values_out},
         block_index=used_block,
-        capture_t=capture_t,
+        capture_step=capture_step,
         value_mode=value_mode,
         mean=values_out.mean(),
         std=values_out.std(),
