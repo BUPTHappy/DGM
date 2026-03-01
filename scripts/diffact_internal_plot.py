@@ -2,6 +2,7 @@ import os
 import random
 import pathlib
 import sys
+import types
 
 import click
 import dill
@@ -93,6 +94,148 @@ def _maybe_downsample(values, max_points):
     return values[idx]
 
 
+def _run_policy_sample_tokens(cfg, policy, loader, device, max_batches):
+    for n, batch in enumerate(loader):
+        if n >= max_batches:
+            break
+
+        batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
+        actions = batch["action"]
+
+        if cfg.model.policy.use_history_action:
+            batch = dict_apply(batch, lambda x: x[:, 1:])
+
+        batch = resize_image(cfg, batch)
+        bsz, T, _, _, _ = batch["obs"]["image"].size()
+
+        if cfg.task.dataset.language_emb_model is not None:
+            if "language" in batch["obs"]:
+                language_goal = batch["obs"]["language"]
+                del batch["obs"]["language"]
+            elif "language_latents" in batch:
+                language_goal = batch["language_latents"]
+                del batch["language_latents"]
+            else:
+                raise NotImplementedError("Language model enabled but no language input found.")
+        else:
+            language_goal = None
+
+        (
+            _x,
+            _real,
+            _latent_size,
+            c,
+            text_latents,
+            history_trajectory,
+            trajectory,
+            proprioception_input,
+        ) = prepare_data_predict_action(
+            cfg, batch, actions, policy, T, device, language_goal=language_goal
+        )
+
+        policy.model.sample_tokens(
+            bsz=bsz,
+            cond=c,
+            text_latents=text_latents,
+            num_iter=cfg.model.policy.autoregressive_model_params.num_iter,
+            cfg=cfg.model.policy.autoregressive_model_params.cfg,
+            cfg_schedule=cfg.model.policy.autoregressive_model_params.cfg_schedule,
+            temperature=cfg.model.policy.autoregressive_model_params.temperature,
+            history_nactions=history_trajectory,
+            nactions=trajectory,
+            proprioception_input=proprioception_input,
+            task_mode="policy_model",
+        )
+
+
+@torch.no_grad()
+def _collect_ucgm_forward_values(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    capture_t,
+    max_points_per_call,
+    target,
+):
+    if not hasattr(policy.model, "diffactloss"):
+        raise RuntimeError("Current checkpoint does not have action diffusion head (diffactloss).")
+
+    ucgm = policy.model.diffactloss.ucgmts
+    if target == "model_mean":
+        print(
+            "[WARN] UCGM has no DDPM model_mean; using z_hat as an internal proxy."
+        )
+    print(
+        f"[INFO] {target} capture configured at step={capture_t}; "
+        f"sampling_steps={policy.model.diffactloss.num_sampling_steps}"
+    )
+
+    collected = []
+    original_unbound = ucgm.__class__.forward
+    call_idx = {"value": 0}
+
+    def wrapped_forward(self, model, x_t=None, t=None, **model_kwargs):
+        x_hat, z_hat, f_t, dent = original_unbound(
+            self, model, x_t=x_t, t=t, **model_kwargs
+        )
+        step_i = call_idx["value"]
+        call_idx["value"] += 1
+        if capture_t < 0 or step_i == capture_t:
+            if target == "noisy_xt":
+                values_tensor = x_t
+            elif target == "eps_pred":
+                values_tensor = f_t
+            elif target == "pred_xstart":
+                values_tensor = x_hat
+            elif target == "model_mean":
+                values_tensor = z_hat
+            else:
+                raise ValueError(f"Unsupported UCGM target: {target}")
+
+            values = values_tensor.detach().float().reshape(-1).cpu().numpy()
+            values = _maybe_downsample(values, max_points_per_call)
+            collected.append(values)
+        return x_hat, z_hat, f_t, dent
+
+    ucgm.forward = types.MethodType(wrapped_forward, ucgm)
+    try:
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
+    finally:
+        ucgm.forward = types.MethodType(original_unbound, ucgm)
+
+    if len(collected) == 0:
+        raise RuntimeError(
+            f"No {target} values collected at step={capture_t}. "
+            "Use --capture-t -1 to collect all sampling steps."
+        )
+    return np.concatenate(collected, axis=0)
+
+
+@torch.no_grad()
+def _collect_diffusion_outputs_values(
+    cfg,
+    policy,
+    loader,
+    device,
+    max_batches,
+    target,
+    capture_t,
+    max_points_per_call,
+):
+    return _collect_ucgm_forward_values(
+        cfg=cfg,
+        policy=policy,
+        loader=loader,
+        device=device,
+        max_batches=max_batches,
+        capture_t=capture_t,
+        max_points_per_call=max_points_per_call,
+        target=target,
+    )
+
+
 @torch.no_grad()
 def _collect_internal_values(
     cfg,
@@ -133,57 +276,7 @@ def _collect_internal_values(
 
     handle = target_block.register_forward_hook(hook_fn)
     try:
-        for n, batch in enumerate(loader):
-            if n >= max_batches:
-                break
-
-            batch = dict_apply(batch, lambda x: x.to(device, non_blocking=True))
-            actions = batch["action"]
-
-            if cfg.model.policy.use_history_action:
-                batch = dict_apply(batch, lambda x: x[:, 1:])
-
-            batch = resize_image(cfg, batch)
-            bsz, T, _, _, _ = batch["obs"]["image"].size()
-
-            if cfg.task.dataset.language_emb_model is not None:
-                if "language" in batch["obs"]:
-                    language_goal = batch["obs"]["language"]
-                    del batch["obs"]["language"]
-                elif "language_latents" in batch:
-                    language_goal = batch["language_latents"]
-                    del batch["language_latents"]
-                else:
-                    raise NotImplementedError("Language model enabled but no language input found.")
-            else:
-                language_goal = None
-
-            (
-                _x,
-                _real,
-                _latent_size,
-                c,
-                text_latents,
-                history_trajectory,
-                trajectory,
-                proprioception_input,
-            ) = prepare_data_predict_action(
-                cfg, batch, actions, policy, T, device, language_goal=language_goal
-            )
-
-            policy.model.sample_tokens(
-                bsz=bsz,
-                cond=c,
-                text_latents=text_latents,
-                num_iter=cfg.model.policy.autoregressive_model_params.num_iter,
-                cfg=cfg.model.policy.autoregressive_model_params.cfg,
-                cfg_schedule=cfg.model.policy.autoregressive_model_params.cfg_schedule,
-                temperature=cfg.model.policy.autoregressive_model_params.temperature,
-                history_nactions=history_trajectory,
-                nactions=trajectory,
-                proprioception_input=proprioception_input,
-                task_mode="policy_model",
-            )
+        _run_policy_sample_tokens(cfg, policy, loader, device, max_batches=max_batches)
     finally:
         handle.remove()
 
@@ -203,6 +296,16 @@ def _plot_hist(values, label, out_path, target, bins=120):
     plt.tight_layout()
     plt.savefig(out_path, dpi=220)
     plt.close()
+
+
+def _transform_values(values, value_mode):
+    if value_mode == "raw":
+        return values
+    if value_mode == "abs":
+        return np.abs(values)
+    if value_mode == "square":
+        return values**2
+    raise ValueError(f"Unsupported value_mode: {value_mode}")
 
 
 @click.command()
@@ -227,7 +330,9 @@ def _plot_hist(values, label, out_path, target, bins=120):
 @click.option(
     "--target",
     default="gate_mlp",
-    type=click.Choice(["gate_mlp", "delta"]),
+    type=click.Choice(
+        ["gate_mlp", "delta", "noisy_xt", "eps_pred", "pred_xstart", "model_mean"]
+    ),
     show_default=True,
     help="Which internal diffusion variable to collect.",
 )
@@ -240,11 +345,25 @@ def _plot_hist(values, label, out_path, target, bins=120):
 )
 @click.option("--bins", default=120, type=int, show_default=True)
 @click.option(
+    "--value-mode",
+    default="raw",
+    type=click.Choice(["raw", "abs", "square"]),
+    show_default=True,
+    help="How to transform collected values before plotting/saving.",
+)
+@click.option(
     "--max-points-per-call",
     default=200000,
     type=int,
     show_default=True,
     help="Randomly keep at most this many values for each denoiser forward call.",
+)
+@click.option(
+    "--capture-t",
+    default=1,
+    type=int,
+    show_default=True,
+    help="For sampling-step targets (noisy_xt/eps_pred/pred_xstart/model_mean), capture values at this step index. Use -1 to collect all steps.",
 )
 @click.option(
     "--dataset-path",
@@ -263,7 +382,9 @@ def main(
     target,
     block_index,
     bins,
+    value_mode,
     max_points_per_call,
+    capture_t,
     dataset_path,
 ):
     output_dir = os.path.abspath(output_dir)
@@ -281,30 +402,76 @@ def main(
         dataset_path=dataset_path,
     )
     loader = _build_val_loader(cfg)
-    values, used_block = _collect_internal_values(
-        cfg=cfg,
-        policy=policy,
-        loader=loader,
-        device=device,
-        max_batches=max_batches,
-        target=target,
-        block_index=block_index,
-        max_points_per_call=max_points_per_call,
-    )
+    if target == "noisy_xt":
+        values = _collect_ucgm_forward_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            capture_t=capture_t,
+            max_points_per_call=max_points_per_call,
+            target=target,
+        )
+        used_block = -1
+        npz_path = os.path.join(output_dir, f"{label}_{target}_t{capture_t}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_t{capture_t}_hist.png")
+    elif target in {"eps_pred", "pred_xstart", "model_mean"}:
+        values = _collect_diffusion_outputs_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            target=target,
+            capture_t=capture_t,
+            max_points_per_call=max_points_per_call,
+        )
+        used_block = -1
+        npz_path = os.path.join(output_dir, f"{label}_{target}_t{capture_t}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_t{capture_t}_hist.png")
+    else:
+        values, used_block = _collect_internal_values(
+            cfg=cfg,
+            policy=policy,
+            loader=loader,
+            device=device,
+            max_batches=max_batches,
+            target=target,
+            block_index=block_index,
+            max_points_per_call=max_points_per_call,
+        )
+        npz_path = os.path.join(output_dir, f"{label}_{target}_block{used_block}.npz")
+        fig_path = os.path.join(output_dir, f"{target}_block{used_block}_hist.png")
 
-    npz_path = os.path.join(output_dir, f"{label}_{target}_block{used_block}.npz")
+    values_out = _transform_values(values, value_mode)
+
     np.savez_compressed(
         npz_path,
-        **{target: values},
+        **{target: values_out},
         block_index=used_block,
-        mean=values.mean(),
-        std=values.std(),
+        capture_t=capture_t,
+        value_mode=value_mode,
+        mean=values_out.mean(),
+        std=values_out.std(),
     )
     print(f"[INFO] Saved values: {npz_path}")
-    print(f"[INFO] {label} {target}: mean={values.mean():.6f}, std={values.std():.6f}")
+    print(
+        f"[INFO] {label} {target} ({value_mode}): "
+        f"mean={values_out.mean():.6f}, std={values_out.std():.6f}"
+    )
 
-    fig_path = os.path.join(output_dir, f"{target}_block{used_block}_hist.png")
-    _plot_hist(values, label=label, out_path=fig_path, target=target, bins=bins)
+    if target == "noisy_xt":
+        fig_path = fig_path.replace(".png", f"_{value_mode}.png")
+    else:
+        fig_path = fig_path.replace(".png", f"_{value_mode}.png")
+    _plot_hist(
+        values_out,
+        label=label,
+        out_path=fig_path,
+        target=f"{target} ({value_mode})",
+        bins=bins,
+    )
     print(f"[INFO] Saved histogram: {fig_path}")
 
 
