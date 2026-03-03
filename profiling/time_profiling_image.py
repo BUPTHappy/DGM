@@ -110,9 +110,15 @@ def main(cfg: DictConfig):
 
         # ---------- Dummy inputs ----------
         LANG = "KITCHEN SCENE6 put the yellow and white mug in the microwave and close it"
+        image_tensor = torch.randn(
+            BATCH_SIZE, 16, 3, 128, 128, device=DEVICE, dtype=torch.float32
+        )
         obs_dict = {
-            # shape: (B, T, C, H, W)
-            "agentview_image": torch.randn(BATCH_SIZE, 16, 3, 128, 128, device=DEVICE, dtype=torch.float32),
+            # Always provide "image" so non-libero tasks (e.g., dish_washing) work.
+            "image": image_tensor,
+            # Keep common aliases for task-specific preprocessing paths.
+            "agentview_image": image_tensor,
+            "camera0_rgb": image_tensor,
         }
         language_goal = [LANG] * BATCH_SIZE  # length BATCH_SIZE
 
