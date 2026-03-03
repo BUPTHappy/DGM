@@ -114,11 +114,8 @@ def main(cfg: DictConfig):
             BATCH_SIZE, 16, 3, 128, 128, device=DEVICE, dtype=torch.float32
         )
         obs_dict = {
-            # Always provide "image" so non-libero tasks (e.g., dish_washing) work.
+            # Provide only the normalized key to avoid normalizer mismatches.
             "image": image_tensor,
-            # Keep common aliases for task-specific preprocessing paths.
-            "agentview_image": image_tensor,
-            "camera0_rgb": image_tensor,
         }
         language_goal = [LANG] * BATCH_SIZE  # length BATCH_SIZE
 
