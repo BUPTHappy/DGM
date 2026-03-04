@@ -56,9 +56,27 @@ from unified_video_action.eval.eval import (
 @click.option("--lambda_local", type=float, default=None, help="Override lambda_local")
 @click.option("--rfba_gap_end", type=float, default=None, help="Override rfba_gap_steps end value")
 @click.option("--extrapol_ratio", type=float, default=None, help="Override extrapol_ratio")
+@click.option(
+    "--video_batches",
+    type=int,
+    default=4,
+    help="Number of validation batches for video/FVD evaluation",
+)
+@click.option(
+    "--save_full_sequences",
+    is_flag=True,
+    help="Save per-sample full sequence videos under output_dir/vis/full_sequences",
+)
+@click.option(
+    "--max_full_sequences",
+    type=int,
+    default=20,
+    help="Maximum number of per-sample full sequences to save",
+)
 def main(checkpoint, output_dir, device, no_ema, fvd, use_ucgm,
          num_sampling_steps, stochasticity_rate, temperature, cfg_scale,
-         window_size, lambda_local, rfba_gap_end, extrapol_ratio):
+         window_size, lambda_local, rfba_gap_end, extrapol_ratio,
+         video_batches, save_full_sequences, max_full_sequences):
     
     os.makedirs(output_dir, exist_ok=True)
     
@@ -188,7 +206,15 @@ def main(checkpoint, output_dir, device, no_ema, fvd, use_ucgm,
         with torch.no_grad():
             try:
                 fvd_log = test_video_fvd(
-                    cfg, policy, val_dataloader, 0, output_dir, device
+                    cfg,
+                    policy,
+                    val_dataloader,
+                    0,
+                    output_dir,
+                    device,
+                    max_batches=video_batches,
+                    save_full_sequences=save_full_sequences,
+                    max_full_sequences=max_full_sequences,
                 )
                 eval_log.update(fvd_log)
             except Exception as e:

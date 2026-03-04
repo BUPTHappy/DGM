@@ -7,6 +7,7 @@ from einops import rearrange
 import torch.nn.functional as F
 import wandb
 import numpy as np
+import math
 
 from unified_video_action.fvd.fvd import get_fvd_logits, frechet_distance
 from unified_video_action.fvd.download import load_i3d_pretrained
@@ -100,7 +101,17 @@ def prepare_data_predict_action(
 
 
 def test_video_fvd(
-    cfg, model, loader, it, output_dir, device, name_label="", plot_actions=False
+    cfg,
+    model,
+    loader,
+    it,
+    output_dir,
+    device,
+    name_label="",
+    plot_actions=False,
+    max_batches=4,
+    save_full_sequences=False,
+    max_full_sequences=20,
 ):
     losses = dict()
     losses["fvd"] = AverageMeter()
@@ -112,7 +123,9 @@ def test_video_fvd(
     reals = []
     predictions = []
 
-    n_examples = 4
+    # Keep preview compact by default: 4 samples per batch for up to max_batches.
+    preview_per_batch = 4
+    saved_full_sequences = 0
 
     with torch.no_grad():
         for n, batch in enumerate(loader):
@@ -120,7 +133,7 @@ def test_video_fvd(
                 print("test_video_fvd", n, len(loader))
 
             x = batch
-            if n >= n_examples:
+            if n >= max_batches:
                 break
 
             x = dict_apply(x, lambda x: x.to(device, non_blocking=True))
@@ -132,7 +145,7 @@ def test_video_fvd(
             x = resize_image(cfg, x)
 
             B, T, C, H, W = x["obs"]["image"].size()
-            k = min(n_examples, B)
+            k = min(preview_per_batch, B)
 
             actions = actions[:k]
             x = dict_apply(x, lambda x: x[:k])
@@ -189,25 +202,45 @@ def test_video_fvd(
             x = (1 + x) * 127.5  # b c t h w
             x = x.type(torch.uint8).cpu()
 
-            if len(predictions) < n_examples:
-                reals.append(
-                    torch.cat(
-                        [
-                            x[:, :, : x.size(2) // 2],
-                            rearrange(real, "b t h w c -> b c t h w"),
-                        ],
-                        dim=2,
+            real_full = torch.cat(
+                [
+                    x[:, :, : x.size(2) // 2],
+                    rearrange(real, "b t h w c -> b c t h w"),
+                ],
+                dim=2,
+            )
+            pred_full = torch.cat(
+                [
+                    x[:, :, : x.size(2) // 2],
+                    rearrange(pred, "b t h w c -> b c t h w"),
+                ],
+                dim=2,
+            )
+
+            reals.append(real_full)
+            predictions.append(pred_full)
+
+            # Optional: export full sequence videos per sample for easier inspection.
+            if save_full_sequences and saved_full_sequences < max_full_sequences:
+                full_dir = os.path.join(output_dir, "vis", "full_sequences")
+                os.makedirs(full_dir, exist_ok=True)
+                for i in range(k):
+                    if saved_full_sequences >= max_full_sequences:
+                        break
+                    seq_idx = saved_full_sequences
+                    save_image_grid(
+                        real_full[i : i + 1].cpu().numpy(),
+                        os.path.join(full_dir, f"{name_label}real_seq_{seq_idx:04d}.gif"),
+                        drange=[0, 255],
+                        grid_size=(1, 1),
                     )
-                )
-                predictions.append(
-                    torch.cat(
-                        [
-                            x[:, :, : x.size(2) // 2],
-                            rearrange(pred, "b t h w c -> b c t h w"),
-                        ],
-                        dim=2,
+                    save_image_grid(
+                        pred_full[i : i + 1].cpu().numpy(),
+                        os.path.join(full_dir, f"{name_label}pred_seq_{seq_idx:04d}.gif"),
+                        drange=[0, 255],
+                        grid_size=(1, 1),
                     )
-                )
+                    saved_full_sequences += 1
 
             if real.shape[1] < 16:
                 pred = pred.repeat_interleave(repeats=4, dim=1)
@@ -228,17 +261,28 @@ def test_video_fvd(
     fvd = fvd.item()
 
     os.makedirs(output_dir + "/vis", exist_ok=True)
+    n_vis = reals.size(0)
+    cols = min(4, n_vis)
+    rows = int(math.ceil(n_vis / cols))
+    total_slots = rows * cols
+    if total_slots > n_vis:
+        pad_count = total_slots - n_vis
+        reals = torch.cat([reals, reals[-1:].repeat(pad_count, 1, 1, 1, 1)], dim=0)
+        predictions = torch.cat(
+            [predictions, predictions[-1:].repeat(pad_count, 1, 1, 1, 1)], dim=0
+        )
+
     real_vid = save_image_grid(
         reals.cpu().numpy(),
         os.path.join(output_dir, f"vis/{name_label}real_{it}.gif"),
         drange=[0, 255],
-        grid_size=(reals.size(0) // 4, 4),
+        grid_size=(cols, rows),
     )  # [4, 3, 8, 128, 128]
     pred_vid = save_image_grid(
         predictions.cpu().numpy(),
         os.path.join(output_dir, f"vis/{name_label}predicted_{it}.gif"),
         drange=[0, 255],
-        grid_size=(predictions.size(0) // 4, 4),
+        grid_size=(cols, rows),
     )  # [4, 3, 8, 128, 128]
 
     real_video = wandb.Video(os.path.join(output_dir, f"vis/{name_label}real_{it}.gif"))
