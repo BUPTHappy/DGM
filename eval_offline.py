@@ -46,6 +46,18 @@ from unified_video_action.eval.eval import (
 @click.option("-d", "--device", default="cuda:0", help="Device (default: cuda:0)")
 @click.option("--no_ema", is_flag=True, help="Disable EMA, use raw model")
 @click.option("--fvd", is_flag=True, help="Also compute FVD (slower)")
+@click.option(
+    "--task_config",
+    type=str,
+    default=None,
+    help="Optional task config yaml to override checkpoint task config (e.g. unified_video_action/config/task/cup_arrangement.yaml)",
+)
+@click.option(
+    "--dataset_path",
+    type=str,
+    default=None,
+    help="Optional dataset path override (e.g. data/cup_arrangement_0.zarr)",
+)
 @click.option("--use_ucgm", is_flag=True, help="Enable UCGM mode")
 # UCGM parameters (all optimized by Bayesian optimization)
 @click.option("--num_sampling_steps", type=int, default=None, help="Override num_sampling_steps")
@@ -76,7 +88,8 @@ from unified_video_action.eval.eval import (
 def main(checkpoint, output_dir, device, no_ema, fvd, use_ucgm,
          num_sampling_steps, stochasticity_rate, temperature, cfg_scale,
          window_size, lambda_local, rfba_gap_end, extrapol_ratio,
-         video_batches, save_full_sequences, max_full_sequences):
+         video_batches, save_full_sequences, max_full_sequences,
+         task_config, dataset_path):
     
     os.makedirs(output_dir, exist_ok=True)
     
@@ -92,6 +105,18 @@ def main(checkpoint, output_dir, device, no_ema, fvd, use_ucgm,
     print("\nLoading checkpoint...")
     payload = torch.load(open(checkpoint, "rb"), pickle_module=dill, weights_only=False)
     cfg = payload["cfg"]
+
+    # Optional task override for checkpoints whose original dataset class is unavailable
+    # in the current codebase (e.g. legacy/removed multitask dataset classes).
+    if task_config is not None:
+        print(f"Overriding task config from: {task_config}")
+        loaded_task_cfg = OmegaConf.load(task_config)
+        with open_dict(cfg):
+            cfg.task = loaded_task_cfg
+    if dataset_path is not None:
+        print(f"Overriding dataset path to: {dataset_path}")
+        with open_dict(cfg):
+            cfg.task.dataset.dataset_path = dataset_path
     
     # Apply UCGM overrides
     with open_dict(cfg.model.policy.autoregressive_model_params):
