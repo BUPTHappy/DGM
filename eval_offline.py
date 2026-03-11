@@ -117,6 +117,24 @@ def main(checkpoint, output_dir, device, no_ema, fvd, use_ucgm,
         print(f"Overriding dataset path to: {dataset_path}")
         with open_dict(cfg):
             cfg.task.dataset.dataset_path = dataset_path
+
+    # Compatibility guard:
+    # Some legacy multitask checkpoints enable predict_proprioception but
+    # model code only supports it for task_name in {"umi", "toolhang"}.
+    # When evaluating task-specific configs (e.g. cup_arrangement), disable it.
+    task_name = str(cfg.task.name)
+    supports_prop_task = (task_name == "umi") or (task_name == "toolhang")
+    if (
+        hasattr(cfg.model.policy, "predict_proprioception")
+        and bool(cfg.model.policy.predict_proprioception)
+        and not supports_prop_task
+    ):
+        print(
+            f"Disabling predict_proprioception for task '{task_name}' "
+            "to avoid unsupported model init branch."
+        )
+        with open_dict(cfg.model.policy):
+            cfg.model.policy.predict_proprioception = False
     
     # Apply UCGM overrides
     with open_dict(cfg.model.policy.autoregressive_model_params):
