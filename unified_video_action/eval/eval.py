@@ -366,22 +366,43 @@ def test_action_l2(
             )
 
             if cfg.model.policy.action_model_params.predict_action:
-                act_out = unnormalize_future_action(
-                    normalizer=model.normalizer,
-                    normalizer_type=model.normalizer_type,
-                    actions=act_out,
-                )
-                trajectory = unnormalize_future_action(
-                    normalizer=model.normalizer,
-                    normalizer_type=model.normalizer_type,
-                    actions=trajectory,
-                )
+                # Some legacy multitask checkpoints can output a larger action head than
+                # the single-task dataset action dimension. Align dims for evaluation.
+                gt_dim = trajectory.shape[-1]
+                pred_actions = act_out
+                if pred_actions.shape[-1] != gt_dim:
+                    pred_actions = pred_actions[:, :, :gt_dim]
+                    if n == 0:
+                        print(
+                            f"Warning: action dim mismatch (pred={act_out.shape[-1]}, gt={gt_dim}); "
+                            f"using first {gt_dim} dims for metrics."
+                        )
+                try:
+                    pred_actions = unnormalize_future_action(
+                        normalizer=model.normalizer,
+                        normalizer_type=model.normalizer_type,
+                        actions=pred_actions,
+                    )
+                    trajectory = unnormalize_future_action(
+                        normalizer=model.normalizer,
+                        normalizer_type=model.normalizer_type,
+                        actions=trajectory,
+                    )
+                except Exception as e:
+                    if n == 0:
+                        print(
+                            f"Warning: unnormalize failed ({e}); "
+                            "falling back to normalized-space action L2."
+                        )
 
                 ## calculate l2 distance between the predicted action and ground truth action
                 # Use actual action dimension (7 for UMI single arm, 14 for dual arm, etc.)
-                action_dim = act_out.shape[-1]
+                action_dim = min(pred_actions.shape[-1], trajectory.shape[-1])
                 l2_distance = torch.sqrt(
-                    torch.sum((trajectory[:, :, :action_dim] - act_out[:, :, :action_dim]) ** 2, dim=-1)
+                    torch.sum(
+                        (trajectory[:, :, :action_dim] - pred_actions[:, :, :action_dim]) ** 2,
+                        dim=-1,
+                    )
                 )
                 action_l2_distances.append(l2_distance.mean())
 
@@ -526,19 +547,36 @@ def test_eef_trajectory_error(
             )
             
             if cfg.model.policy.action_model_params.predict_action:
-                # Unnormalize predicted actions
-                act_out = unnormalize_future_action(
-                    normalizer=model.normalizer,
-                    normalizer_type=model.normalizer_type,
-                    actions=act_out,
-                )
-                
-                # Also unnormalize ground truth actions for comparison
-                gt_actions = unnormalize_future_action(
-                    normalizer=model.normalizer,
-                    normalizer_type=model.normalizer_type,
-                    actions=trajectory,
-                )
+                gt_dim = trajectory.shape[-1]
+                pred_actions = act_out
+                if pred_actions.shape[-1] != gt_dim:
+                    pred_actions = pred_actions[:, :, :gt_dim]
+                    if n == 0:
+                        print(
+                            f"Warning: action dim mismatch (pred={act_out.shape[-1]}, gt={gt_dim}); "
+                            f"using first {gt_dim} dims for trajectory metrics."
+                        )
+                try:
+                    # Unnormalize predicted actions
+                    pred_actions = unnormalize_future_action(
+                        normalizer=model.normalizer,
+                        normalizer_type=model.normalizer_type,
+                        actions=pred_actions,
+                    )
+                    
+                    # Also unnormalize ground truth actions for comparison
+                    gt_actions = unnormalize_future_action(
+                        normalizer=model.normalizer,
+                        normalizer_type=model.normalizer_type,
+                        actions=trajectory,
+                    )
+                except Exception as e:
+                    if n == 0:
+                        print(
+                            f"Warning: unnormalize failed ({e}); "
+                            "falling back to normalized-space trajectory metrics."
+                        )
+                    gt_actions = trajectory
                 
                 if is_bimanual:
                     # Bimanual task: process both robot0 and robot1
@@ -551,7 +589,7 @@ def test_eef_trajectory_error(
                         gt_eef_trajectory = gt_eef_full_trajectory[:, 1:, :]  # (B, T_full-1, 3)
                         
                         # Extract position deltas for this arm
-                        predicted_pos_deltas = act_out[:, :, pos_start_idx:pos_start_idx+3]  # (B, T_action, 3)
+                        predicted_pos_deltas = pred_actions[:, :, pos_start_idx:pos_start_idx+3]  # (B, T_action, 3)
                         
                         # Debug info for first batch
                         if n == 0 and len(trajectory_errors) == 0:
@@ -605,7 +643,7 @@ def test_eef_trajectory_error(
                     
                     # Extract position deltas from predicted actions
                     # Action format: [pos_delta(3), rot_delta(3), gripper_delta(1)]
-                    predicted_pos_deltas = act_out[:, :, :3]  # (B, T_action, 3)
+                    predicted_pos_deltas = pred_actions[:, :, :3]  # (B, T_action, 3)
                     gt_pos_deltas = gt_actions[:, :, :3]  # (B, T_action, 3)
                     
                     # Debug: Check action magnitudes (only for first batch, first sample)
