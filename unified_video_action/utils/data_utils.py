@@ -225,6 +225,7 @@ def process_data(batch, task_name="", eval=False, **kwargs):
     ## normalize image
     x = rearrange(x / 127.5 - 1, "b t c h w -> b c t h w")
 
+    proprioception_input = None
     if kwargs["use_proprioception"]:
         if "toolhang" in task_name:
             wrist_image = batch["obs"]["wrist_image"]
@@ -358,9 +359,6 @@ def process_data(batch, task_name="", eval=False, **kwargs):
                 "robot0_gripper_width_pred": robot0_gripper_width_pred,
                 "robot0_eef_rot_axis_angle_wrt_start_pred": robot0_eef_rot_axis_angle_wrt_start_pred,
             }
-
-    else:
-        proprioception_input = None
 
     return x, proprioception_input, indices
 

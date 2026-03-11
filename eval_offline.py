@@ -135,6 +135,19 @@ def main(checkpoint, output_dir, device, no_ema, fvd, use_ucgm,
         )
         with open_dict(cfg.model.policy):
             cfg.model.policy.predict_proprioception = False
+
+    # Same compatibility issue for proprioceptive conditioning path.
+    if (
+        hasattr(cfg.model.policy, "use_proprioception")
+        and bool(cfg.model.policy.use_proprioception)
+        and not supports_prop_task
+    ):
+        print(
+            f"Disabling use_proprioception for task '{task_name}' "
+            "to avoid unsupported proprioception input assumptions."
+        )
+        with open_dict(cfg.model.policy):
+            cfg.model.policy.use_proprioception = False
     
     # Apply UCGM overrides
     with open_dict(cfg.model.policy.autoregressive_model_params):
