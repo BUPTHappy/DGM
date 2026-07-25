@@ -42,7 +42,21 @@ from types import SimpleNamespace
     type=int,
     default=None,
     show_default=True,
-    help="Override number of test rollouts per task in Libero.",
+    help="Override number of test rollouts (Libero: per task; PushT: total test envs).",
+)
+@click.option(
+    "--seed",
+    type=int,
+    default=None,
+    show_default=True,
+    help="Override RNG seed used for model sampling stochasticity.",
+)
+@click.option(
+    "--test_start_seed",
+    type=int,
+    default=None,
+    show_default=True,
+    help="Override env_runner.test_start_seed (PushT / env IC bank).",
 )
 @click.option('--pruning_ratios_file', type=str, required=False, help='List of lists input in JSON format')
 @click.option(
@@ -73,7 +87,7 @@ from types import SimpleNamespace
     show_default=True,
     help="Lambda parameter for local feature fusion."
 )
-def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
+def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, seed, test_start_seed, pruning_ratios_file, use_ucgm, num_sampling_steps, stochasticity_rate, window_size, lambda_local):
 
     pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
@@ -129,14 +143,23 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
         cfg.model.policy.autoregressive_model_params.token_pruning = False
         cfg.model.policy.autoregressive_model_params.restore_after_encoder = False
 
-    # set seed
-    seed = cfg.training.seed
-    torch.manual_seed(seed)
-    np.random.seed(seed)
-    random.seed(seed)
+    # set seed (CLI --seed overrides checkpoint training.seed)
+    if seed is not None:
+        with open_dict(cfg):
+            cfg.training.seed = int(seed)
+    rng_seed = int(cfg.training.seed)
+    torch.manual_seed(rng_seed)
+    np.random.seed(rng_seed)
+    random.seed(rng_seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(rng_seed)
+    print(f"Using RNG seed: {rng_seed}")
 
     with open_dict(cfg):
         cfg.output_dir = output_dir
+        if test_start_seed is not None:
+            cfg.task.env_runner.test_start_seed = int(test_start_seed)
+            print(f"Using test_start_seed: {cfg.task.env_runner.test_start_seed}")
 
     # configure workspace
     cls = hydra.utils.get_class(cfg.model._target_)
@@ -176,7 +199,7 @@ def main(checkpoint, output_dir, device, dataset_path, no_ema, n_test, pruning_r
                     cfg.task.env_runner.dataset_path = dataset_path
             print(f"Using dataset_path override: {cfg.task.env_runner.dataset_path}")
     else:
-        cfg.task.env_runner.n_test = 50
+        cfg.task.env_runner.n_test = 50 if n_test is None else int(n_test)
         
     env_runners = load_env_runner(cfg, output_dir)
 
